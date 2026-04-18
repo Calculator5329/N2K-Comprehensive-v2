@@ -1,0 +1,86 @@
+name: Deploy Almanac to GitHub Pages
+
+# Build the static N2K Almanac (web/) and publish it to GitHub Pages.
+#
+# The dataset JSONs (web/public/data/*) are .gitignored, so we generate
+# them in CI from the solver before running the Vite build. The whole
+# pipeline (export → prepare → stats → vite build) runs in well under a
+# minute on the GitHub-hosted runners.
+#
+# After the first successful run, set GitHub Pages source to "GitHub
+# Actions" in repo Settings → Pages. The workflow will then publish on
+# every push to main.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A queued deploy supersedes an in-flight one. We never want two pushes
+# fighting over the live site.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build static Almanac
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Typecheck (root + web)
+        run: |
+          npm run typecheck
+          npm --workspace web run typecheck
+
+      - name: Run solver test suite
+        run: npm test
+
+      - name: Generate dataset (NDJSON → chunked JSON → target stats)
+        run: npm run data:all
+
+      - name: Build web bundle
+        env:
+          # Project Pages serve from /<repo-name>/, so Vite needs to bake
+          # that prefix into asset URLs and into the dataset BASE_URL.
+          VITE_BASE: /N2K-Comprehensive-v2/
+        run: npm --workspace web run build
+
+      - name: Add SPA-friendly 404 fallback
+        run: cp web/dist/index.html web/dist/404.html
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    name: Deploy to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

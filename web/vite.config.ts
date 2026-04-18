@@ -2,7 +2,15 @@ import { defineConfig } from "vite";
 import { fileURLToPath, URL } from "node:url";
 import react from "@vitejs/plugin-react";
 
+// `BASE` lets the same build target both:
+//   - the dev server / local preview (defaults to "/")
+//   - GitHub Pages project hosting (set in CI to "/N2K-Comprehensive-v2/")
+// Code that needs the prefix at runtime (e.g. fetching JSON from /data/...)
+// reads `import.meta.env.BASE_URL`, which Vite injects from this value.
+const BASE = process.env.VITE_BASE ?? "/";
+
 export default defineConfig({
+  base: BASE,
   plugins: [react()],
   resolve: {
     alias: {

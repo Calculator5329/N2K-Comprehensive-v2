@@ -9,9 +9,13 @@ import type {
 /**
  * Stateless data-loading service. Knows where the JSON files live and how
  * to fetch them. No caching here — that's the store's job.
+ *
+ * `import.meta.env.BASE_URL` is the deployment base path injected by Vite
+ * (`/` for local dev / preview, `/N2K-Comprehensive-v2/` on GitHub Pages).
+ * Always ends with a trailing slash, so we can safely concatenate.
  */
 
-const BASE_PATH = "/data";
+const BASE_PATH = `${import.meta.env.BASE_URL}data`;
 
 function diceKey(dice: DiceTriple): string {
   return `${dice[0]}-${dice[1]}-${dice[2]}`;
