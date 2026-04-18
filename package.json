@@ -1,0 +1,46 @@
+{
+  "name": "n2k-comprehensive-solver-v2",
+  "version": "2.0.0",
+  "description": "N2K Comprehensive V2 — CLI solver, difficulty analyzer, and Almanac web app for the N2K dice/equation game.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "web"
+  ],
+  "exports": {
+    "./services/*": "./dist/services/*.js",
+    "./core/*": "./dist/core/*.js"
+  },
+  "bin": {
+    "n2k": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsx src/main.ts",
+    "dev": "tsx src/main.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:web": "npm --workspace web run test",
+    "test:all": "vitest run && npm --workspace web run test",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "data:export": "tsx scripts/export-dataset.ts",
+    "data:prep": "tsx scripts/prepare-web-data.ts",
+    "data:all": "tsx scripts/export-dataset.ts && tsx scripts/prepare-web-data.ts",
+    "data:advanced": "tsx scripts/export-advanced.ts",
+    "web:dev": "npm --workspace web run dev",
+    "web:build": "npm --workspace web run build",
+    "web:preview": "npm --workspace web run preview"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "eslint": "^9.17.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

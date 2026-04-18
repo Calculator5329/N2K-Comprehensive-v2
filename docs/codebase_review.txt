@@ -1,0 +1,1262 @@
+================================================================================
+N2K COMPREHENSIVE SOLVER — DEEP CODEBASE REVIEW
+Generated: 2026-04-18
+Reviewer: deep-context audit (read-only)
+================================================================================
+
+This file is a comprehensive context dump of the entire codebase as of the
+audit date. It is meant to be re-readable on its own without re-exploring
+every file. Sections:
+
+  1. Project at a glance
+  2. Repository layout (full file map)
+  3. Workspace + tooling
+  4. Solver workspace (src/) — module-by-module
+  5. Scripts (data pipeline)
+  6. Tests
+  7. Web workspace (web/) — module-by-module
+  8. Data artifacts on disk
+  9. Documentation set
+ 10. Cross-cutting architecture observations
+ 11. Inventory: bugs, smells, dead code, drift
+ 12. Performance hotspots
+ 13. Risk register / technical debt
+ 14. Suggested changes (small, medium, large)
+
+
+================================================================================
+1.  PROJECT AT A GLANCE
+================================================================================
+
+What it is:
+- A TypeScript port of an originally-Python game-math solver for "N2K", a
+  dice/equation game whose canonical equation shape is:
+       d1^p1  o1  d2^p2  o2  d3^p3  =  total
+  with operators evaluated STRICTLY LEFT-TO-RIGHT (no precedence).
+- Ships as TWO npm workspaces in one repo:
+    a) Root package "n2k-comprehensive-solver" — the Node CLI/REPL solver,
+       data exporter, and the pure algorithmic core.
+    b) "web/" package "@n2k/web" — a static React + MobX + Tailwind + Vite
+       single-page app ("The N2K Almanac") that browses, searches, and
+       visualizes the solver's bulk export, with 16 visually distinct
+       editions/themes.
+- Node ESM (`"type": "module"`, NodeNext resolution); Node 20+; TS 5.7
+  with strict + noUncheckedIndexedAccess + exactOptionalPropertyTypes.
+- Tests: Vitest, ~63 tests in 9 files at audit time.
+
+What "comprehensive" means here:
+- The solver enumerates every (dice perm × exponent triple × operator pair)
+  for a triple and target. With dice 1..20 and totals 1..999 the bulk export
+  produces ~370k–530k records (~30 MB) in ~6s on a modern laptop.
+- The web app renders that dataset in four primary views (Lookup / Explore
+  / Visualize / Compose) plus a Colophon, all client-side static, with
+  themable layout, dice glyph, and equation rendering.
+
+Why it's interesting architecturally:
+- Strict three-layer separation:  cli/ -> services/ -> core/
+- The pure-services layer is shared between Node (REPL/exporter) and the
+  web app via a Vite path alias `@solver/* -> ../src/*` (NOT a published
+  package). The web also wraps it in its own services for browser-specific
+  concerns (Web Workers, fetch caches).
+- The theming system has THREE layers (TS theme registry, CSS-variable
+  bundles, component variants for layouts/dice/equation) and a 16-edition
+  registry with no per-edition forks of feature code.
+
+
+================================================================================
+2.  REPOSITORY LAYOUT (FULL FILE MAP)
+================================================================================
+
+Top-level files:
+  README.md                    Overview, install, REPL commands, web docs.
+  package.json                 Root workspace; defines bin "n2k", scripts.
+  tsconfig.json                Strict, ES2022, NodeNext, src/ in, tests out.
+  vitest.config.ts             Node env, coverage of src/ except cli/main.
+  .gitignore                   Ignores node_modules, dist, *.ndjson,
+                               *.manifest.json, data-raw/, web/public/data/,
+                               playwright artifacts, etc.
+  n2k-export.ndjson            ~45 MB committed/local NDJSON dataset.
+  n2k-export.manifest.json     ~340 KB pretty-printed manifest sidecar.
+  *.png (~80 screenshots)      Edition/layout reference shots.
+
+Source tree:
+  src/
+    main.ts                    Entry: shebang + runRepl().
+    cli/
+      commands.ts              REPL command handlers (8 commands).
+      format.ts                Board grid formatter, percent helper.
+      prompt.ts                Async readline wrapper class Prompt.
+      repl.ts                  Command registry + main loop.
+    core/
+      constants.ts             MAX_EXPONENTS, OP/symbol maps,
+                               DICE_COMBINATIONS, DIFFICULTY weights,
+                               BOARD = {6,6,36}, DIFFICULTY_BUCKETS,
+                               FLOAT_EQ_EPSILON.
+      types.ts                 Operator (1|2|3|4), DiceTriple, Equation,
+                               SolverInput.
+    services/
+      arithmetic.ts            applyOperator, evaluateLeftToRight,
+                               permutationsOf3.
+      boardAnalysis.ts         scoreBoardForDice, bucketResults,
+                               assertValidBoard.
+      competition.ts           summarizeBoardDifficulty, expectedScore,
+                               rankCandidates, generateBalancedRolls.
+                               (~580 LOC; the largest service.)
+      difficulty.ts            difficultyOfEquation, difficultyBreakdown.
+      exporter.ts              enumerateUnorderedTriples,
+                               exportAllSolutions (NDJSON + manifest).
+      generators.ts            generateRandomBoard, generatePatternBoard,
+                               generateRandomDice, BoardSpec/generateBoard.
+      parsing.ts               parseEquation, formatEquation,
+                               parseOperator, operatorToString.
+      solver.ts                easiestSolution, allSolutions,
+                               solveForAllTargets.
+
+Scripts (TS, executed via tsx; not built):
+  scripts/
+    export-dataset.ts          Wrapper: runs exportAllSolutions with
+                               diceMin=1 diceMax=20 totalMin=1 totalMax=999
+                               depower=false, writes to data-raw/.
+    prepare-web-data.ts        Streams NDJSON+manifest -> writes
+                               web/public/data/{index, by-target,
+                               dice/{a-b-c}}.json.
+
+Tests (Vitest):
+  tests/
+    arithmetic.test.ts
+    boardAnalysis.test.ts
+    bulkSolver.test.ts
+    competition.test.ts
+    difficulty.test.ts
+    exporter.test.ts
+    generators.test.ts
+    parsing.test.ts
+    solver.test.ts
+    smoke-export.ts            (NOT a *.test.ts; manual long-running smoke.)
+
+Docs:
+  docs/
+    roadmap.md                 Done + six-phase web upgrade plan.
+    tech_spec.md               Architecture, file map, theming system.
+    changelog.md               Long, detailed (~880 lines).
+    current_task.md            "Advanced Mode (secret)" draft spec.
+    themes.md                  How to add a new edition.
+
+Web workspace:
+  web/
+    package.json               @n2k/web; React 18, MobX 6, Vite 5,
+                               Tailwind 3.
+    vite.config.ts             Alias @solver -> ../src; host: true; port
+                               5173; build target es2022; sourcemaps.
+    tsconfig.json              Strict; paths "@solver/*": ["../src/*"];
+                               include src + ../src/**/*.ts.
+    tailwind.config.js         Colors/fonts wired to CSS variables via
+                               rgb(var(--token) / <alpha-value>).
+    postcss.config.js          tailwindcss + autoprefixer.
+    index.html                 Pre-mount script reads localStorage
+                               n2k.theme + applies data-theme to <html>;
+                               whitelist of all 16 theme ids; default
+                               "tabletop"; preloads Google Fonts.
+    public/data/
+      index.json               Per-dice triple summary list (~120 KB).
+      by-target.json           Globally easiest equation per target 1..999.
+      dice/{a-b-c}.json        1,540 per-triple chunks (~3-5 KB each).
+    src/
+      main.tsx                 ReactDOM bootstrap + globals.css import.
+      vite-env.d.ts            /// <reference types="vite/client" />.
+      app/App.tsx              AppStore creation, StoreProvider, bootstrap
+                               loadIndex(), ViewSwitch on store.view.
+      core/
+        themes.ts              ~593 LOC: ThemeId, LayoutId, DiceGlyphStyle,
+                               EquationStyle, ThemeOrnaments, Theme,
+                               THEMES record, DEFAULT_THEME = "tabletop".
+        types.ts               DiceSummary, DatasetIndex, Solution,
+                               DiceDetail, ByTargetEntry, Loadable<T>.
+      services/
+        candidatePools.ts      Standard 38 vs Extensive 1540 dice pools
+                               (extensive lazy).
+        competitionService.ts  makeDataStoreResolver, ensureCandidatesLoaded
+                               (poll loop, 30 ms tick, 60 s timeout).
+        datasetService.ts      Stateless fetch JSON helpers.
+        solverWorker.ts        Web Worker: imports @solver/services/solver,
+                               returns allSolutions ranked by difficulty.
+        solverWorkerService.ts Singleton main-thread facade with id-keyed
+                               request map; resets on worker error.
+        urlHashState.ts        readHash/writeHash/clearHash/subscribeHash;
+                               history.replaceState; preserves unknown keys.
+      stores/
+        AppStore.ts            Wraps DataStore + ThemeStore + FavoritesStore;
+                               owns active View ("lookup" | "explore" |
+                               "visualize" | "compose" | "about").
+        DataStore.ts           Loadable<DatasetIndex>, Loadable<ByTarget>,
+                               Map<string, Loadable<DiceDetail>> with
+                               in-flight dedupe.
+        FavoritesStore.ts      observable.set persisted to localStorage
+                               under n2k.favorites.v1.
+        ThemeStore.ts          MobX, n2k.theme, mirrors to <html data-theme>.
+        storeContext.tsx       React context + useStore() hook.
+      ui/
+        DiceGlyph.tsx          ~437 LOC; 13 internal renderers dispatched
+                               by THEMES[active].glyph.
+        DifficultyBreakdown.tsx Player-facing collapsible factors panel.
+        DifficultyMeter.tsx    5-pip difficulty meter.
+        Equation.tsx           Tokenizer + rendered/ascii dispatch.
+        FavoriteToggle.tsx     SVG star, stopPropagation, aria-pressed.
+        nav.ts                 NAV_ITEMS + FOOTER_COLOPHON per ThemeId.
+        PageShell.tsx          LayoutId -> component dispatcher.
+        ThemeSelector.tsx      vertical / horizontal / discreet popover.
+        Wordmark.tsx           Brand mark (default + compact).
+        layouts/               12 layout components (sidebar, topbar,
+                               manuscript, blueprint, frame, receipt,
+                               board, platform, spreadsheet, scrapbook,
+                               panels, chart). BoardLayout is the largest
+                               (~432 LOC).
+      features/
+        about/AboutView.tsx    Colophon page (uses old "three editions"
+                               copy — drift).
+        compose/
+          BoardEditor.tsx      6x6 grid editor with overrides.
+          CompetitionResults.tsx Per-round and totals rendering.
+          ComposeView.tsx      View root; `useMemo(() => new
+                               CompositionStore(root.data), [root.data])`.
+          CompositionStore.ts  MobX state for boards/config/seed; runs
+                               `generateAll` two-phase pipeline; mulberry32
+                               + FNV hash for seeding.
+        explore/
+          ExploreStore.ts      ~580 LOC; multi-sort, filters, saved views
+                               (localStorage n2k.explore.views.v1), URL
+                               hash sync.
+          ExploreView.tsx      Sortable filterable index + drilldown.
+        lookup/
+          AllEquationsList.tsx Worker-backed disclosure listing every
+                               equation for cell, with 25-at-a-time
+                               pagination.
+          LookupStore.ts       dice + total + URL hash sync; clamps
+                               die 1..20, total 1..999.
+          LookupView.tsx       Stepper input, NeighborhoodStrip with
+                               keyboard nav, SolutionPanel with breakdown
+                               and AllEquationsList.
+        visualize/
+          difficultyScale.ts   Lerp 0..100 over theme palette stops.
+          VisualizeView.tsx    Heatmap (999 cells) + histogram + scatter.
+        _shared/PageHeader.tsx Eyebrow / title / dek / right-slot, clamps.
+      styles/globals.css       2,144 lines; 16 [data-theme=...] blocks +
+                               base/components/utilities + per-theme
+                               treatment overrides.
+
+Other directories at root:
+  .git/                        Git history.
+  .idea/                       JetBrains workspace (committed).
+  .playwright-mcp/             MCP browser-test artifacts.
+  data-raw/                    .gitignored output dir for export-dataset.
+  dist/                        Compiled output (when built).
+  node_modules/                Dependencies.
+
+
+================================================================================
+3.  WORKSPACE + TOOLING
+================================================================================
+
+package.json (root):
+  - Bin:        n2k -> ./dist/main.js
+  - Workspaces: ["web"]
+  - Scripts:
+      build, start, dev (tsx), test (vitest run), test:watch,
+      typecheck (tsc --noEmit), lint (eslint),
+      data:export, data:prep, data:all,
+      web:dev, web:build, web:preview.
+  - Dev deps:   typescript 5.7, @types/node 22, eslint 9 + ts-eslint 8,
+                tsx 4, vitest 2.
+  - Notable:    No runtime dependencies in the root package — solver
+                ships zero deps. The web package brings in React/MobX/
+                Tailwind/Vite.
+
+tsconfig.json (root):
+  - target ES2022, module NodeNext, strict, noImplicitOverride,
+    noImplicitReturns, noFallthroughCasesInSwitch,
+    noUncheckedIndexedAccess, exactOptionalPropertyTypes,
+    declaration + sourceMap, resolveJsonModule.
+  - rootDir src, outDir dist; excludes node_modules, dist, tests.
+
+vitest.config.ts:
+  - Node environment.
+  - Coverage on src/**/*.ts EXCEPT src/main.ts and src/cli/**.
+  - include: tests/**/*.test.ts only (so tests/smoke-export.ts is
+    intentionally not a test).
+
+ESLint:
+  - eslint 9 + @typescript-eslint 8 declared as dev deps. No eslint
+    config file present in audited tree; effectively unused/default.
+
+web/package.json:
+  - React 18, MobX 6 (mobx + mobx-react-lite), Tailwind 3, Vite 5,
+    @vitejs/plugin-react, autoprefixer, postcss.
+  - Scripts: dev, build (tsc -b then vite build), preview, typecheck.
+
+web/vite.config.ts:
+  - alias @solver -> "../src" (i.e. the SOLVER WORKSPACE'S src/, not
+    web/src). This is the single seam used by the web to consume pure
+    solver code.
+  - server.host = true, preview.host = true (LAN binding).
+  - build.target "es2022", sourcemaps on, port 5173.
+
+web/tsconfig.json:
+  - paths "@solver/*": ["../src/*"]. include adds "../src/**/*.ts".
+
+
+================================================================================
+4.  SOLVER WORKSPACE (src/) — MODULE BY MODULE
+================================================================================
+
+DEPENDENCY GRAPH (within src/):
+
+  main.ts -> cli/repl.ts
+                |
+                +-- cli/commands.ts -> core/constants
+                |                   -> services/* (most)
+                |                   -> cli/format, cli/prompt (type)
+                +-- cli/prompt.ts
+
+  core/types.ts <-- (everywhere)
+  core/constants.ts -> core/types.ts (type-only)
+
+  cli/format.ts -> core/constants (BOARD)
+
+  services/arithmetic.ts -> core/constants (OP), core/types
+  services/parsing.ts    -> core/constants, core/types
+  services/difficulty.ts -> core/constants, core/types
+  services/solver.ts     -> core/constants, core/types,
+                            arithmetic, difficulty
+  services/boardAnalysis.ts -> core/constants, core/types,
+                                difficulty, solver
+  services/exporter.ts   -> node:fs[/promises], node:path,
+                            core/types, parsing, solver
+  services/generators.ts -> core/constants (BOARD), core/types
+  services/competition.ts -> core/constants (BOARD), core/types
+                            (NOT used by Node REPL; used by web/tests)
+
+LINE COUNTS (src/, ~2,412 total non-empty):
+  main.ts              9
+  cli/commands.ts    210
+  cli/format.ts       31
+  cli/prompt.ts       60
+  cli/repl.ts         82
+  core/constants.ts  108
+  core/types.ts       36
+  services/arithmetic.ts      51
+  services/boardAnalysis.ts   95
+  services/competition.ts    582  <-- largest module
+  services/difficulty.ts     270
+  services/exporter.ts       227
+  services/generators.ts     306
+  services/parsing.ts         78
+  services/solver.ts         267
+
+
+--- src/main.ts ---------------------------------------------------------
+Tiny shebang + runRepl() with fatal-error catch.
+
+
+--- src/core/types.ts ---------------------------------------------------
+  Operator        = 1 | 2 | 3 | 4   (ADD, SUB, MUL, DIV)
+  OperatorSymbol  = "+" | "-" | "*" | "/"
+  DiceTriple      = readonly [number, number, number]
+  Equation        { d1, d2, d3, p1, p2, p3, o1, o2, total }
+  SolverInput     { dice: DiceTriple, total: number }
+
+
+--- src/core/constants.ts -----------------------------------------------
+  MAX_EXPONENTS         per-base exponent caps; index by dice value.
+  OP                    { ADD:1, SUB:2, MUL:3, DIV:4 }
+  OPERATOR_TO_SYMBOL    map.
+  SYMBOL_TO_OPERATOR    map.
+  ALL_OPERATORS         [1,2,3,4]
+  DICE_COMBINATIONS     38 standard tournament dice triples.
+  DIFFICULTY            weighted-sum config: ~7 named terms + tenFlag,
+                        upper-tail compression, ceiling clamp at 100.
+  BOARD                 { rows: 6, cols: 6, size: 36 }
+  DIFFICULTY_BUCKETS    [[lo,hi]] pairs for histogramming.
+  FLOAT_EQ_EPSILON      1e-9
+
+
+--- src/services/arithmetic.ts ------------------------------------------
+  applyOperator(a, b, op): exhaustive switch on Operator. NO `default`
+    branch — exhaustiveness is enforced at type level only.
+  evaluateLeftToRight(n1, n2, n3, o1, o2): two-step left-to-right reduce.
+  permutationsOf3(a, b, c): returns all 6 permutations.
+
+
+--- src/services/parsing.ts ---------------------------------------------
+  operatorToString(op), parseOperator(token).
+  formatEquation(eq) -> "d1^p1 o1 d2^p2 o2 d3^p3 = total".
+  parseEquation(input): split on /\s+/; expects 7 tokens; throws a
+    typed SyntaxError on mismatch.
+
+
+--- src/services/difficulty.ts ------------------------------------------
+  difficultyBreakdown(equation): single source of truth, returns
+    { equation, terms, adjustments, final, ceiling }.
+  difficultyOfEquation(equation): thin wrapper -> breakdown.final.
+
+  Heuristic shape (terms, weighted):
+    distance to a free base power for the target,
+    counts of zeros (^0) and ones (^1) used,
+    largest sub-result + distance from target,
+    smallest multiplicand penalty,
+    + tenFlag adjustment for ×10 simplification,
+    + upper-tail compression past a threshold,
+    clamped at 100.
+  basesForDice uses MAX_EXPONENTS[d] ?? 1; loop is `exp < cap`.
+
+
+--- src/services/solver.ts ----------------------------------------------
+  SolverOptions     { depower?: boolean = true }
+  easiestSolution(input, options?): best-difficulty Equation | null.
+  BulkSolution      { equation, difficulty }
+  allSolutions(input, options?): every match, sorted by difficulty.
+  solveForAllTargets(dice, minTotal, maxTotal, options?):
+    Map<total, BulkSolution>; SINGLE enumeration over the equation
+    space, scoring all targets in [min,max] in one pass — the engine
+    behind the bulk export.
+
+  Hot loop:
+    for each (d1,d2,d3) in 6 dice perms:
+      for each precomputed exponent triple (p1,p2,p3):
+        for each (o1,o2) in 4×4 ops:
+          eval left-to-right, accept within FLOAT_EQ_EPSILON, score,
+          keep min (or push to all results).
+  buildBasesCache: per-call Map<base, number[]> so unique dice values
+  precompute their power tables exactly once. (Phase 0 perf hoist.)
+  depower: 4/8/16 -> base 2; 9 -> base 3 (preserves Python semantics
+  by default; export sets depower=false to keep raw dice).
+
+
+--- src/services/boardAnalysis.ts ---------------------------------------
+  scoreBoardForDice(dice, board): per-cell easiestSolution +
+    difficultyOfEquation; impossible cells contribute 100 to the
+    composite (ZeroDivisionError fix from Python). Returns
+    { dice, cellDifficulties, impossibleCount,
+      averagePossibleDifficulty, boardDifficulty }.
+  bucketResults(results): groups by DIFFICULTY_BUCKETS using
+    `>= lo && < hi`. NB: the last bucket is [80, 100) — scores
+    exactly 100 (i.e. fully impossible boards) fall outside ALL
+    buckets. (See bug section.)
+  assertValidBoard(board): length and integer/positive-ness checks.
+
+
+--- src/services/generators.ts ------------------------------------------
+  generateRandomBoard(rangeOrHighest?, rng?):
+    overload (number) treats as max with min=1; or { min?, max }.
+  generatePatternBoard(multiples?, startingNumber?):
+    accepts 1, 2, OR 3 multiples (Python parity); 3-multiple form
+    auto-shifts start so cells stay non-negative.
+  generateRandomDice(options?, rng?): rejects (a==b==c) re-roll.
+  BoardOverride / RandomBoardSpec / PatternBoardSpec / BoardSpec.
+  generateBoard(spec, rng?): dispatcher that handles per-slot pinned
+    overrides while keeping unique values; with overrides it preserves
+    POSITIONAL layout (so a pinned slot stays at that index).
+
+
+--- src/services/exporter.ts --------------------------------------------
+  enumerateUnorderedTriples(min, max): C(n+2,3) triples in
+    non-decreasing order.
+  exportAllSolutions(outputPath, options?): NDJSON streaming write +
+    sidecar manifest (perDice array). createWriteStream + drain
+    backpressure; mkdir recursive.
+  Output is sorted (dice asc, total asc) for reproducibility.
+  Manifest schema: generatedAt, dice/total ranges, depower,
+    recordsWritten, elapsedMs, perDice[].
+
+
+--- src/services/competition.ts -----------------------------------------
+  Largest service. Drives the web's Compose view.
+  DifficultyResolver = (dice, target) => number | null
+    (caller-provided oracle; Node passes easiestSolution(...)
+    .difficulty; web passes a DataStore-cached version.)
+  scoreBoardCells(board, dice, resolver) -> per-cell difficulty.
+  summarizeBoardDifficulty(cells) -> averagePossibleDifficulty,
+    impossibleCount, boardDifficulty (avg solvable + 100×impossible).
+  expectedScore(board, cells, options?):
+    blends three sub-strategies (inverse-difficulty harvest,
+    bottom-up time budget, easiest-first time budget); rescales by
+    39.48 / timeBudget; sorts the value/difficulty arrays internally
+    so it's order-invariant on the board.
+  rankCandidates(board, candidates, resolver, scoreOptions?):
+    sorts by expectedScore DESC.
+  BalancedRollsOptions / RoundAssignment / BalancedRollsResult.
+  generateBalancedRolls(board, candidates, rounds, resolver, opts?):
+    1) score candidates with both expectedScore and boardDifficulty,
+    2) restrict to easier-by-difficulty median half,
+    3) form adjacent-rank pairs by expectedScore,
+    4) sample rounds pairs uniformly without replacement,
+    5) per-round assign to minimize |sumExp(P1) − sumExp(P2)|;
+       difficulty delta as tie-breaker;
+       has an EXACT bitmask path for ≤16 rounds and a greedy swap
+       fallback (default 8 passes).
+  Injectable rng default Math.random for full determinism with seed.
+
+
+--- src/cli/prompt.ts ---------------------------------------------------
+  class Prompt { ask, askInt, askIntInRange, askYesNo, close }.
+  Built on node:readline/promises; loops until valid for typed asks.
+
+
+--- src/cli/format.ts ---------------------------------------------------
+  formatBoard(values): 6x6 grid string, "-" for null. Throws RangeError
+    if length != 36.
+  percent(part, whole): "X.XX%"; returns "0%" for whole=0.
+
+
+--- src/cli/commands.ts -------------------------------------------------
+  Eight handlers, each (Prompt) => Promise<void>:
+    cmdGenerateRandomBoard
+    cmdGeneratePatternBoard
+    cmdGenerateRandomDice
+    cmdSolveEquation
+    cmdFindDifficulty       (catches SyntaxError from parser)
+    cmdFindBoardDifficulty  (HOT: 38 dice × 36 cells × easiestSolution)
+    cmdExportAllSolutions   (#9 — calls services/exporter)
+  Note: cmdExportAllSolutions has a prompt template
+    `[${diceMin > 20 ? 20 : 20}]` — both branches return 20 (effectively
+    dead conditional).
+
+
+--- src/cli/repl.ts -----------------------------------------------------
+  runRepl(): builds command registry with aliasesFor(id, name)
+    (UPPERCASE name, the number, "COMMAND N", "CN"); dispatches by
+    canonical match; commands 1 (End) and 2 (List) are meta and use
+    handler: null + non-null assertion at dispatch.
+  Always closes Prompt in finally.
+
+
+================================================================================
+5.  SCRIPTS (DATA PIPELINE)
+================================================================================
+
+scripts/export-dataset.ts:
+  - Wrapper: `tsx scripts/export-dataset.ts [outputPath]`.
+  - Defaults outputPath to ./data-raw/n2k-export.ndjson; mkdir parent.
+  - Calls exportAllSolutions with diceMin=1, diceMax=20, totalMin=1,
+    totalMax=999, depower=false, onProgress every 100 completions or
+    at the end.
+  - NOTE the HARDCODED depower=false here, vs the committed root
+    n2k-export.manifest.json (which shows depower:true) — they were
+    produced at different times.
+
+scripts/prepare-web-data.ts:
+  - Reads the NDJSON + manifest written by export-dataset.
+  - Streams records into a Map<string, Record[]> (per-dice) and a
+    Map<number, Record> for by-target (keeps the GLOBAL minimum
+    difficulty per target; ties: first wins).
+  - Writes out:
+      web/public/data/index.json     (uses manifest.perDice ordering)
+      web/public/data/by-target.json (one entry per total, null for
+                                      unsolvable)
+      web/public/data/dice/{a-b-c}.json
+  - Pure I/O, no service layer code.
+  - Untested.
+
+
+================================================================================
+6.  TESTS
+================================================================================
+
+Vitest config restricts include to tests/**/*.test.ts. ~63 tests in
+9 files at audit time.
+
+tests/arithmetic.test.ts
+  applyOperator, evaluateLeftToRight, permutationsOf3.
+tests/parsing.test.ts
+  parseOperator, parseEquation (incl. error paths from Python regression).
+tests/boardAnalysis.test.ts
+  scoreBoardForDice, bucketResults; div-by-zero regression.
+tests/bulkSolver.test.ts
+  solveForAllTargets correctness, parity vs easiestSolution, depower,
+  trivial dice [1,1,1].
+  Local helper: evaluate(eq) using evaluateLeftToRight + Math.pow.
+tests/exporter.test.ts
+  enumerateUnorderedTriples; exportAllSolutions integration with tmp
+  dir, manifest contents, progress callback. Small dice ranges.
+tests/generators.test.ts
+  Uses local seededRng helper for determinism. Strong override-pinning
+  regressions for generateBoard.
+tests/competition.test.ts
+  summarizeBoardDifficulty, expectedScore, scoreBoardCells,
+  rankCandidates, generateBalancedRolls. Mix of stub resolvers and
+  one live integration test against DICE_COMBINATIONS.slice(0, 10).
+tests/difficulty.test.ts
+  Couples breakdown.final to difficultyOfEquation; tenFlag and
+  ^0/^1 regression.
+tests/solver.test.ts
+  easiestSolution, allSolutions sorting and depower.
+  KNOWN ISSUE: a section that claims to assert allSolutions[0] matches
+  easiestSolution actually compares all[0]!.difficulty to itself
+  (effectively dead assertion).
+
+tests/smoke-export.ts
+  Manual long-running script: full 1..20 × 1..999 export with
+  depower:false. Not picked up by Vitest. Duplicates configuration
+  with scripts/export-dataset.ts.
+
+Coverage holes (unmeasured):
+  - prepare-web-data.ts (entire web data shape contract)
+  - by-target.json semantics, NDJSON↔chunk consistency
+  - CLI argv defaults
+  - depower=true full export path in exporter test
+  - web stores (no jsdom or component tests)
+
+
+================================================================================
+7.  WEB WORKSPACE (web/) — MODULE BY MODULE
+================================================================================
+
+DATA FLOW (one direction):
+  /data/index.json -------------\
+  /data/by-target.json ---------+--> datasetService -> DataStore
+  /data/dice/{a-b-c}.json ------/                          |
+                                                           v
+                                                    feature stores
+                                                  (LookupStore,
+                                                   ExploreStore,
+                                                   CompositionStore)
+                                                           |
+                                                           v
+                                                       observers
+                                                  (LookupView, etc.)
+
+WORKER PATH:
+  AllEquationsList -> solverWorkerService.solveAllEquations(dice,total)
+                   -> postMessage { id, dice, total }
+                   -> solverWorker.ts (uses @solver/services/solver
+                      .allSolutions + @solver/services/parsing
+                      .formatEquation)
+                   -> back to main thread, resolves Promise.
+
+SHARED CODE WITH SOLVER (via @solver/* alias):
+  - services/solverWorker.ts          @solver/services/{solver,parsing}
+  - ui/DifficultyBreakdown.tsx        @solver/services/{difficulty,parsing}
+  - services/candidatePools.ts        @solver/core/constants (DICE_COMBINATIONS)
+  - services/competitionService.ts    @solver/services/competition (type)
+  - features/compose/CompositionStore @solver/services/{generators,competition}
+                                      @solver/core/constants (BOARD)
+
+
+--- web/src/main.tsx ----------------------------------------------------
+StrictMode + createRoot, imports globals.css.
+
+--- web/src/app/App.tsx -------------------------------------------------
+useMemo(() => new AppStore()); StoreProvider; Bootstrap loads index;
+ViewSwitch maps store.view to one of the five feature views.
+
+--- web/src/core/types.ts -----------------------------------------------
+On-disk shapes:
+  DiceSummary, DatasetIndex, Solution, DiceDetail, ByTargetEntry.
+Loadable<T> sum type:
+  | { state: "idle" }
+  | { state: "loading" }
+  | { state: "ready", value: T }
+  | { state: "error", error: string }
+Helper sentinels: idle, loading.
+
+--- web/src/core/themes.ts ----------------------------------------------
+~593 LOC theme registry. Defines 16 themes with full theme records:
+  id, label, tagline, swatches[], layout (LayoutId), glyph
+  (DiceGlyphStyle), equation (EquationStyle), ornaments
+  { sectionMarker, mastheadSuffix, ruleStyle, corner? },
+  scale { stops[], impossible }.
+DEFAULT_THEME = "tabletop".
+
+--- web/src/services/datasetService.ts ----------------------------------
+Stateless. BASE_PATH = "/data". loadIndex / loadDice(dice) / loadByTarget.
+
+--- web/src/services/urlHashState.ts ------------------------------------
+Tiny hash-state util. HashSchema<T> with read/write functions. writeHash
+preserves unknown keys (so multiple features can share the hash) and
+goes through history.replaceState (no back-stack pollution). subscribeHash
+listens to hashchange.
+
+--- web/src/services/candidatePools.ts ----------------------------------
+"standard" (38 from DICE_COMBINATIONS) and "extensive" (1,540 lazily
+generated). CandidatePoolMeta { id, label, count, getCandidates() }.
+
+--- web/src/services/competitionService.ts ------------------------------
+makeDataStoreResolver(dataStore): adapts the lazy per-dice cache into a
+synchronous DifficultyResolver — returns null (treated as unsolvable)
+if the dice triple's chunk isn't ready yet.
+ensureCandidatesLoaded(dataStore, candidates, onProgress?): triggers
+all chunk fetches and polls every 30 ms (up to 60 s) until each
+DataStore entry is ready.
+
+--- web/src/services/solverWorker.ts ------------------------------------
+Web Worker entry. Request: { id, dice, total }. Response: { id, kind:
+"ok", solutions } | { id, kind: "error", message }. Uses
+@solver/services/solver.allSolutions + @solver/services/parsing
+.formatEquation.
+
+--- web/src/services/solverWorkerService.ts -----------------------------
+Singleton main-thread facade. Lazily spins up one long-lived worker
+on first call. id-keyed pending Map. On "error" event resets the worker
+and rejects any in-flight requests so the next call re-spins it.
+
+--- web/src/stores/AppStore.ts ------------------------------------------
+view: View; data: DataStore; theme: ThemeStore; favorites: FavoritesStore.
+makeAutoObservable with explicit `false` overrides for the substores
+(they have their own observability).
+
+--- web/src/stores/DataStore.ts -----------------------------------------
+index, byTarget: Loadable<...> as observables (using observable.box-
+flavored fields); diceCache: Map<string, Loadable<DiceDetail>> +
+pendingDice Map<string, Promise> for in-flight dedupe.
+Methods: loadIndex(), loadByTarget(), ensureDice(dice), diceState(dice).
+Uses runInAction for state transitions; returns the cached Loadable
+synchronously, mutating it as the fetch progresses.
+
+--- web/src/stores/FavoritesStore.ts ------------------------------------
+observable.set<string>; persisted to localStorage under
+n2k.favorites.v1 as a sorted JSON array of "a-b-c" keys. Mirrors the
+defensive read/persist pattern used in ThemeStore (corrupt storage
+boots empty; write failures swallowed).
+
+--- web/src/stores/ThemeStore.ts ----------------------------------------
+theme: ThemeId; constructor reads localStorage n2k.theme; writes mirror
+to <html data-theme="...">. setTheme(id) updates and persists.
+
+--- web/src/stores/storeContext.tsx -------------------------------------
+React context + useStore() hook. Throws if used outside a provider.
+
+--- web/src/ui/PageShell.tsx --------------------------------------------
+LAYOUTS: Record<LayoutId, ComponentType<{children: ReactNode}>>.
+Reads theme.theme, looks up THEMES[id].layout, renders with children.
+Defensive fallback: if a future LayoutId is missing, falls back to
+SidebarLayout (was once BoardLayout per docs/changelog).
+
+--- web/src/ui/nav.ts ---------------------------------------------------
+NAV_ITEMS for the five views; FOOTER_COLOPHON keyed by ThemeId.
+
+--- web/src/ui/ThemeSelector.tsx ----------------------------------------
+Three orientations:
+  vertical:    rail-style stacked list (sidebar layouts).
+  horizontal:  compact wrapped row.
+  discreet:    "[flag] EDITION ▾" button + popover with click-outside +
+               Escape to close.
+A11y: radiogroup, role="radio", aria-checked.
+
+--- web/src/ui/DiceGlyph.tsx --------------------------------------------
+~437 LOC. Internal renderers (one per glyph variant): DiceTile, DiceAscii,
+DiceNewsroom, DicePixel, DiceIlluminated, DiceBlueprint, DiceTarot,
+DiceBoardgame, DiceBullet, DiceCell, DicePolaroid, DicePanel, DiceBuoy.
+Dispatched from THEMES[active].glyph. Optional onClick wraps in a button.
+
+--- web/src/ui/Equation.tsx ---------------------------------------------
+Tokenizer for "d^p" terms; rendered (with <sup>) vs ascii (mono) based on
+THEMES[active].equation. Provides aria-label of the full equation.
+
+--- web/src/ui/DifficultyBreakdown.tsx ----------------------------------
+Calls @solver/services/parsing.parseEquation + @solver/services/difficulty
+.difficultyBreakdown; projects each numeric term to a coarse impact
+bucket (none/low/moderate/high) and a direction (easier/harder/neutral).
+Player-facing FACTOR_COPY map keyed by term id.
+
+--- web/src/ui/DifficultyMeter.tsx --------------------------------------
+5-pip bucket meter on thresholds 10/25/50/75/90.
+
+--- web/src/ui/FavoriteToggle.tsx ---------------------------------------
+SVG star button. e.stopPropagation() so it can be embedded inside row
+click handlers. aria-pressed.
+
+--- web/src/ui/Wordmark.tsx ---------------------------------------------
+Brand wordmark; "default" + "compact" sizes.
+
+--- web/src/ui/layouts/* ------------------------------------------------
+Twelve layouts; each implements ({children}) => JSX.Element with its own
+masthead, navigation, edition selector orientation, and footer. They all
+read NAV_ITEMS from nav.ts and FOOTER_COLOPHON keyed by current theme.
+BoardLayout is the largest (~432 LOC) and is the default theme's layout.
+The five "shell" layouts NOT yet built (per earlier docs) are now
+present (platform, spreadsheet, scrapbook, panels, chart).
+
+--- web/src/features/lookup/LookupStore.ts ------------------------------
+Observable dice (DiceTriple) + total (number). Hash schema "lookup":
+"v1:d1,d2,d3/total" (or similar — versioned). startSync() returns a
+disposer combining autorun (writes hash) + subscribeHash (reads hash);
+LookupView calls it from useEffect.
+Clamps die 1..20 and total 1..999. dice getter returns sorted triple.
+
+--- web/src/features/lookup/LookupView.tsx ------------------------------
+Stepper inputs, SolutionPanel (DifficultyMeter + DifficultyBreakdown +
+AllEquationsList + FavoriteToggle), NeighborhoodStrip with roving
+tabindex keyboard nav (←/→ ±1, PageUp/Down ±10, Home/End jump 1/999).
+A page-level keydown listener applies the same shortcuts when no
+editable element is focused.
+
+--- web/src/features/lookup/AllEquationsList.tsx ------------------------
+Local React state. On open, calls solveAllEquations(dice, total) via
+the worker. Sequence-ref guard against stale replies. Pagination 25
+at a time.
+
+--- web/src/features/explore/ExploreStore.ts ----------------------------
+Multi-sort (SortCriterion[]), filter (ExploreFilters), saved views
+(SavedView[] persisted to localStorage n2k.explore.views.v1), URL hash
+sync (versioned schema "v1;..."). filter() and sort() are pure on a
+DiceSummary[] input. FavoritesStore is pulled into the filter
+predicates.
+
+--- web/src/features/explore/ExploreView.tsx ----------------------------
+Owns its store: useMemo(() => new ExploreStore(favorites)). Sortable
+column headers respond to plain click + shift-click + right-click for
+multi-sort. Drilldown panel uses data.ensureDice + diceState.
+
+--- web/src/features/visualize/difficultyScale.ts -----------------------
+Lerps 0..100 across a theme's stops. paletteFor(theme) builds an array
+useful for chart legends; useDifficultyPalette() consumes ThemeStore.
+
+--- web/src/features/visualize/VisualizeView.tsx ------------------------
+Three charts:
+  Heatmap of all 999 targets (37 cols × 27 rows ≈ 999 cells in DOM).
+  Histogram of average per-dice difficulty (~20 bins).
+  SVG scatter of coverage vs difficulty across 1,540 triples.
+
+--- web/src/features/compose/CompositionStore.ts ------------------------
+TIME_BUDGET_PRESETS = 30/60/120 (default 60). MobX observables for
+boards (BoardConfig[]), candidatePoolId, timeBudget, seed text, and
+status flags. mulberry32 + FNV-1a hash to derive a deterministic RNG
+from optional seed text. generateAll() runs a two-phase pipeline:
+  1) ensureCandidatesLoaded(dataStore, candidates, onProgress)
+  2) for each board: generateBoard(spec, rng) -> generateBalancedRolls
+     using makeDataStoreResolver.
+
+--- web/src/features/compose/ComposeView.tsx, BoardEditor.tsx,
+    CompetitionResults.tsx -------------------------------------------
+Observer-only. ComposeView wires the store; BoardEditor is a 6×6 cell
+editor with override pinning; CompetitionResults renders rounds,
+totals (Δ expected score and Δ difficulty), and Export Plan (JSON).
+
+--- web/src/features/about/AboutView.tsx --------------------------------
+Editorial colophon. NB: copy still says "three editions" while the
+shipping app has 16 editions — drift.
+
+--- web/src/styles/globals.css ------------------------------------------
+2,144 lines. Roughly:
+  Tailwind base/components/utilities directives.
+  16 [data-theme="..."] CSS-variable bundles (paper/ink/accent/support
+    triplets, fonts, page shadow/radius/border, selection colors).
+  @layer base: html, body, selection, tabular nums, headings, number
+    input spinners, etc.
+  @layer components: .page-surface, .rule, .label-caps,
+    .equation-display, .inkwell, .dropcap, many .dice-* classes,
+    .equation-ascii.
+  @layer utilities: .text-display-tight, .divider-hair, .num.
+  Per-theme treatment overrides (textures, scanlines, drop caps,
+    halftone, etc.) from ~line 951 onward.
+
+
+================================================================================
+8.  DATA ARTIFACTS ON DISK
+================================================================================
+
+Root:
+  n2k-export.ndjson      ~45 MB (committed?). Probably .gitignored
+                         per pattern; check git.
+  n2k-export.manifest.json
+                         Pretty-printed; ~340 KB; ~18.5k lines (large
+                         perDice array). Sample shows
+                         depower=true / recordsWritten=530191.
+
+web/public/data/:
+  index.json             Single minified JSON line; structure:
+                           generatedAt, diceMin, diceMax, totalMin,
+                           totalMax, depower, recordsWritten,
+                           diceTriplesTotal, dice[]
+                         Sample: depower=false / recordsWritten=371989.
+  by-target.json         Per-target globally easiest equation.
+  dice/{a-b-c}.json      1,540 chunks. Each:
+                           { dice:[a,b,c],
+                             summary:{...},
+                             solutions:{ "<target>": {difficulty, equation}, ... } }
+                         Only solvable targets appear.
+
+DRIFT WARNING: the root manifest and the published index were generated
+in different runs (different depower setting + different
+recordsWritten). Re-run `npm run data:all` to align if you care about
+the canonical dataset matching the shipped Almanac.
+
+
+================================================================================
+9.  DOCUMENTATION SET
+================================================================================
+
+docs/roadmap.md    Done + six-phase web upgrade plan.
+                   Phase 0 (foundations), 1 (Lookup polish), 2 (in-browser
+                   solver) — DONE. Phases 3-6 — pending.
+docs/tech_spec.md  Architecture, services, file map, full theming spec.
+docs/changelog.md  Long, detailed (~880 lines). Major sections:
+                     - Tabletop responsive pass (current)
+                     - Vite LAN binding
+                     - Compose: expected-score-first balancing
+                     - Mobile-responsive layout pass
+                     - Phase 2: Web Worker + AllEquationsList
+                     - Phase 1: Lookup polish
+                     - Phase 0: foundations (perf hoist + URL hash + favs)
+                     - 16-edition theming history (5 -> 10 -> 11 -> 16)
+                     - Original Python -> TS port + bug-fixes section
+docs/current_task.md  DRAFT — pending approval (2026-04-18). "Advanced
+                     Mode (secret)" — bigger dice/exponent ranges, arity
+                     3/4/5, custom packed-binary .n2k file format,
+                     konami-unlocked Æther edition. ~550 LOC of spec.
+docs/themes.md     Recipe to add a new edition (theme registry + CSS
+                   bundle + bootstrap whitelist + footer colophon).
+
+
+================================================================================
+10. CROSS-CUTTING ARCHITECTURE OBSERVATIONS
+================================================================================
+
+Layer discipline is REAL and largely respected:
+  - core/ depends on nothing in-tree.
+  - services/ depends only on core/ (and node:* in exporter).
+  - cli/ depends on services + core; no other ingress to console.log.
+  - web/ services do fetch only.
+  - web/ stores own state and orchestrate; no React imports.
+  - web/ components observe stores; no fetches; no business logic.
+
+Cross-workspace seam:
+  - The web app imports the SOLVER's `src/` directly via Vite alias
+    `@solver/* -> ../src/*`. This is elegant but unusual:
+      + No publication step; web always has the latest solver code.
+      + But: solver's tsconfig excludes tests, while web's tsconfig
+        adds "../src/**/*.ts" to its include — meaning solver source
+        is type-checked twice (once by root, once by web/tsc -b).
+      + The root tsconfig's `module: NodeNext` produces ESM output for
+        the solver, while web bundles via Vite/esbuild — the source
+        files are written with `.js` import suffixes (Node ESM
+        convention), which Vite/Esbuild also accept since aliasing
+        resolves before file lookup. This mostly works but is fragile.
+
+RNG & determinism:
+  - All random surfaces accept an injectable rng: () => number.
+  - Generators tests use a seededRng helper; competition tests do too.
+  - CompositionStore builds a mulberry32 from optional seed text via
+    FNV-1a; this is reproducible end-to-end.
+
+Performance philosophy:
+  - Brute-force solver, intentionally. MAX_EXPONENTS keeps it tractable.
+  - Hot path optimizations: per-base power tables (precomputeBases),
+    single-pass solveForAllTargets, NDJSON streaming export with
+    backpressure.
+  - Web app: lazy per-dice JSON chunks (~3-5 KB) with in-flight
+    dedupe; Web Worker for full-equation lists; no React Suspense.
+
+Theming system:
+  - Three layers: TS theme registry; CSS-variable bundles (one per
+    [data-theme]); component variants (DiceGlyph, Equation, layouts).
+  - 16 editions, no per-edition forks of feature code. Adding a 17th
+    is a four-step recipe (themes.ts entry + CSS bundle + index.html
+    whitelist + nav.ts colophon).
+  - Colors are space-separated RGB triplets so Tailwind's
+    `<alpha-value>` modifier (`bg-paper-100/60`) keeps working.
+
+Hash + storage:
+  - urlHashState envelope is shared between Lookup, Explore (saved
+    views), and the Compose plan (planned in Phase 5).
+  - localStorage keys: n2k.theme, n2k.favorites.v1,
+    n2k.explore.views.v1.
+
+Accessibility:
+  - Keyboard nav implemented for the Lookup neighborhood strip and
+    page-level shortcuts.
+  - aria-label, aria-pressed (FavoriteToggle), aria-current
+    (NeighborhoodStrip), aria-live (AllEquationsList loading),
+    radiogroup/radio (ThemeSelector).
+  - Likely incomplete on charts (heatmap is a giant grid of buttons or
+    DOM cells; would benefit from a screen-reader summary table).
+
+Testing posture:
+  - Strong unit coverage for arithmetic, parsing, difficulty, solver
+    (with caveats), generators, board analysis, competition.
+  - Integration coverage on exporter via tmp dir.
+  - One live solver integration in competition.
+  - NO tests for prepare-web-data, web stores, or web components.
+
+
+================================================================================
+11. INVENTORY: BUGS, SMELLS, DEAD CODE, DRIFT
+================================================================================
+
+CONFIRMED MINOR BUGS:
+  - bucketResults edge: last bucket is [80, 100) so a fully-impossible
+    board (boardDifficulty === 100) falls outside ALL buckets. Either
+    extend the last bucket to [80, 100] or document explicitly.
+    (services/boardAnalysis.ts)
+  - cmdExportAllSolutions prompt template `[${diceMin > 20 ? 20 : 20}]`
+    is a dead conditional; both branches yield 20.
+    (cli/commands.ts)
+  - applyOperator's exhaustive switch has no `default`; comment claims
+    "throws on unknown operator" but at runtime an unknown value would
+    return undefined (TS treats type as exhaustive only).
+    (services/arithmetic.ts)
+  - basesForDice fallback comment says `[d^0, d^1]` but implementation
+    returns `[d^0]` only (since the loop is `exp < cap` and cap is 1).
+    Difficulty heuristic for unknown dice values is therefore narrower
+    than documented.
+    (services/difficulty.ts)
+  - tests/solver.test.ts: a section that purports to assert
+    allSolutions[0] matches easiestSolution actually compares
+    all[0]!.difficulty to itself — dead assertion.
+  - tests/bulkSolver.test.ts: a comment lists `[-1,0,1,2,3]` but text
+    says "four trivial targets" — off-by-one in the comment.
+
+DRIFT:
+  - features/about/AboutView.tsx still talks about "three editions"
+    while the shipped app has 16.
+  - Root n2k-export.manifest.json (depower=true, recordsWritten=530191)
+    vs web/public/data/index.json (depower=false, recordsWritten=
+    371989) — the on-disk dataset and the manifest snippet were
+    generated in different runs.
+  - Root README mentions "three editions" in one section and "sixteen"
+    elsewhere via tech_spec; the README's "almanac is published in
+    three editions" line is stale.
+  - Roadmap claims Phase 0 step 3 (FavoritesStore) is shipped, and the
+    code reflects that — but there's no dedicated favorites view yet
+    (out of scope per the Phase 0 doc; just confirming it's not a bug).
+
+DEAD CODE / UNUSED:
+  - ESLint declared but no eslint.config.* file in the audited tree.
+  - tests/smoke-export.ts duplicates scripts/export-dataset.ts; not
+    in CI; could be deleted or unified.
+  - Some layouts (`scrapbook`, `panels`, `chart`, `platform`,
+    `spreadsheet`) had a fallback note in the changelog claiming they
+    weren't built yet, but the files exist now — fallback comments
+    in PageShell may be stale.
+
+INCONSISTENCIES:
+  - Tests folder is excluded from root tsconfig.json but tests are
+    written in TS and run by Vitest (which uses tsx). This is fine
+    but leaves them out of `tsc --noEmit` typecheck.
+
+POTENTIAL ISSUES:
+  - solveAllSolutions in the worker streams the entire result list
+    back as a single message. For pathologically heavy targets, this
+    could exceed structured-clone budgets. Pagination only happens on
+    the UI side after the entire array arrives.
+  - DataStore.ensureDice does NOT cap the cache size. A user clicking
+    through hundreds of triples will retain all of them in memory.
+    Probably fine in practice (~5 KB × 1,540 ~= 7.7 MB max) but worth
+    knowing.
+  - The web `globals.css` is a 2,144-line monolith. Adding a 17th
+    edition continues to grow it linearly. Splitting per-theme CSS
+    into separate files (with a Vite plugin or @import chain) would
+    keep things navigable.
+
+
+================================================================================
+12. PERFORMANCE HOTSPOTS
+================================================================================
+
+Solver core (src/services/solver.ts):
+  - Dominant cost is the inner triple loop (perms × exps × ops).
+    Already optimized with per-base power tables.
+  - difficultyOfEquation called per accepted candidate. Difficulty
+    walks bases again — could be hoisted further to share the same
+    base tables.
+  - solveForAllTargets is a major win over per-target easiestSolution.
+
+Board analysis (src/services/boardAnalysis.ts):
+  - scoreBoardForDice does 36 separate easiestSolution calls per dice
+    triple. Per `Find board difficulty` (#8), this is 38 × 36 = 1,368
+    calls. Replacing with solveForAllTargets(dice, 1, max(board))
+    once, then looking each board cell up in the resulting Map, would
+    drastically reduce work (already noted in roadmap "Longer term").
+
+Competition (src/services/competition.ts):
+  - rankCandidates over the Extensive 1,540-triple pool calls
+    expectedScore once per triple. expectedScore allocates and sorts
+    arrays of length 36 each call. For Extensive pools with many
+    boards this adds up; some array reuse would help if it ever
+    becomes a UX bottleneck.
+
+Web app:
+  - Visualize heatmap: 999 DOM cells per render. With theme switches
+    + scroll, this is fine, but a Canvas/SVG redraw would be cheaper
+    if charts grow.
+  - AllEquationsList: solver runs in worker, so main thread is okay.
+    The serialized result can be large; consider streaming chunks.
+  - CSS file size: ~2.1k lines. Both Tailwind-purged components plus
+    raw theme bundles add up. Per-theme CSS code splitting could reduce
+    initial paint cost.
+
+
+================================================================================
+13. RISK REGISTER / TECHNICAL DEBT
+================================================================================
+
+High-leverage debts:
+  D1. Web app has zero automated tests. Stores like ExploreStore (~580
+      LOC of filter+sort+saved-views) and CompositionStore (~290 LOC
+      of orchestration) are pure logic and easy to unit-test. Adding
+      Vitest to the web workspace would catch regressions cheaply.
+  D2. The data pipeline (prepare-web-data.ts) is untested and silently
+      skips edge cases (tie-breaking, empty input, manifest mismatch).
+  D3. The cross-workspace alias `@solver/*` is unconventional. If you
+      ever want to publish the solver as a package, this seam will
+      need to evolve into a proper workspace dep (or a published npm
+      package), and then the web tsconfig include that pulls in
+      `../src/**/*.ts` becomes redundant/misleading.
+  D4. globals.css is monolithic and scaling linearly with editions.
+      A theme-per-file split would cap blast radius and make code
+      review of new editions cleaner.
+  D5. The "Advanced Mode" plan (docs/current_task.md) is large and
+      sprawling. It introduces a custom binary file format, new
+      arity-N types, a separate worker pool, and a hidden Æther
+      edition. Every one of these is worth doing only if the core
+      product needs the data; the plan doesn't say WHY (no user-facing
+      need is documented).
+
+Medium debts:
+  D6. ESLint is declared but not configured. CI is presumably absent
+      (no .github/, .gitlab-ci, etc. seen in audit).
+  D7. Repo root contains ~80 PNG screenshots (~10+ MB total). They
+      double as reference shots and as "did we break it" baselines,
+      but they're not in a git-friendly subfolder and they're not in
+      .gitignore. Risk: bloat over time.
+  D8. competition.ts is the largest single file at ~580 LOC and packs
+      many responsibilities (scoring, ranking, sampling, balancing,
+      bitmask optimizer). Splitting into competition/scoring.ts +
+      competition/balancing.ts would make it more testable.
+
+Low debts:
+  D9. Stale README sections (three editions vs sixteen).
+  D10. Confusing dataset drift between manifest and shipped JSON.
+  D11. Dead/stale comments and assertions noted in §11.
+
+
+================================================================================
+14. SUGGESTED CHANGES (SMALL, MEDIUM, LARGE)
+================================================================================
+
+SMALL (≤1 hour each):
+  S1.  Fix bucketResults to include score 100 in the last bucket
+       (change `< hi` to `<= hi` for the final bucket only, OR widen
+       to 100.0001).
+  S2.  Replace dead conditional `[${diceMin > 20 ? 20 : 20}]` with the
+       intended clamp logic in cmdExportAllSolutions.
+  S3.  Add `default: throw new Error(...)` to applyOperator (matches
+       the doc comment, hardens against bad runtime data).
+  S4.  Fix the dead self-comparison in tests/solver.test.ts and the
+       comment off-by-one in tests/bulkSolver.test.ts.
+  S5.  Update AboutView.tsx and README.md to say "sixteen editions".
+  S6.  Re-run `npm run data:all` to align the on-disk manifest with
+       the shipped index.json (or remove the committed root manifest).
+  S7.  Remove tests/smoke-export.ts (duplicates scripts/export-dataset)
+       OR move to scripts/.
+  S8.  Add an eslint.config.js (flat config) so the declared lint
+       script actually does something.
+  S9.  Move root-level *.png screenshots into docs/screens/ or
+       docs/snapshots/ so the repo root stays tidy. Add a README
+       there documenting why they exist.
+  S10. In DataStore.ensureDice, add a soft cap on cache size (LRU)
+       to prevent indefinite growth when a power user is browsing.
+
+MEDIUM (a few hours each):
+  M1.  Refactor scoreBoardForDice to call solveForAllTargets ONCE per
+       dice triple and look up each board cell in the resulting Map.
+       Should make `Find board difficulty` (#8) ~30x faster (already
+       on the roadmap; do it).
+  M2.  Add Vitest to the web workspace and unit-test ExploreStore
+       (filter, multi-sort, saved views encode/decode) and
+       CompositionStore (seeded determinism, boards × candidates).
+       No DOM tests required for those.
+  M3.  Add a small set of integration tests for prepare-web-data:
+       feed a tiny synthetic NDJSON + manifest and assert the
+       resulting JSON shapes (index.json, by-target.json, one chunk).
+  M4.  Split web/src/styles/globals.css into a base file plus one
+       file per theme imported on demand (or via a small registry).
+       Keep gz size roughly the same but reduce blast radius for
+       theme work.
+  M5.  Split src/services/competition.ts into:
+         services/competition/scoring.ts        (expectedScore + helpers)
+         services/competition/ranking.ts        (rankCandidates)
+         services/competition/balancing.ts      (sampleWithoutReplacement
+                                                + balanceExactly + greedy)
+         services/competition/index.ts          (re-exports + the public
+                                                generateBalancedRolls)
+       Same public API; smaller diffs; easier to test.
+  M6.  Add JSON output mode to `Find board difficulty` (#8) so it can
+       be piped into other tools. Already in roadmap "Longer term".
+  M7.  Add a non-interactive subcommand interface
+       (`n2k solve --dice 2,2,2 --total 40`,
+        `n2k export --out ...`) so the CLI is scriptable.
+  M8.  Add a tiny CI workflow (`.github/workflows/ci.yml`) running
+       `npm ci && npm run typecheck && npm test && npm --workspace
+       web run typecheck && npm --workspace web run build`. This is
+       table stakes given the strong test base.
+  M9.  Coverage gauge: install `@vitest/coverage-v8` (already covered
+       in vitest config) and post coverage on PRs.
+
+LARGE (multi-day):
+  L1.  Browser-side bulk export. The data pipeline currently requires
+       Node + tsx. Move the export into a Web Worker pool (already
+       hinted in the Advanced Mode draft) and let the web app
+       generate its own dataset. Side benefit: kills the cross-
+       workspace alias's fragility because the web no longer needs
+       Node-side scripts.
+  L2.  Better solver algorithm. The current brute-force solver is
+       O(perms × exp^3 × ops^2). For each (dice triple) you can:
+         a) Precompute all reachable values from a single die under
+            the chosen exp range.
+         b) For each pair of dice, build a sorted Map of all
+            (op-applied) intermediate values (meet-in-the-middle).
+         c) For each candidate target, look up complementary
+            intermediate values in the third die's reachable set.
+       This drops the per-target check from O(d^3) to O(d^2 log d)
+       and makes Advanced Mode (43 dice × 5,000 targets × arity 4/5)
+       tractable without 8-worker pools.
+  L3.  Parquet output. Add an `--out-format=parquet` mode for the
+       export. NDJSON is convenient; Parquet is cheaper to query
+       and load into DuckDB/Polars and would shrink the dataset
+       roughly 5-10×. Requires accepting a single dependency
+       (`parquetjs` or similar).
+  L4.  Theme system as a plugin tree. Today, adding an edition
+       touches four files. With a small plugin loader you could
+       co-locate everything for one edition (theme record + CSS
+       bundle + optional layout + optional dice variant + colophon)
+       in a single `editions/<id>/` folder, registered via a
+       `import.meta.glob` discovery. The system already scales
+       fine; this is a maintainability nicety once you cross ~25
+       editions or want third parties to drop in editions.
+  L5.  Reconsider Advanced Mode scope. The draft in
+       docs/current_task.md is a major lift (custom binary format,
+       new arity types, separate worker pool, secret edition). The
+       only documented motivation is "vastly enlarges the playable
+       space." Before building it, write down WHO benefits and HOW
+       the secret data shows up in their workflow. If the core
+       audience is players of the original 3-dice game, Advanced is
+       optional flavor — and a much smaller solver-only export to
+       NDJSON for a power user might be 90% of the value at 10% of
+       the cost.
+  L6.  Replace the cross-workspace alias `@solver/*` with a real
+       internal package. Move `src/` into `packages/solver/src/`,
+       give it its own `package.json`, and have web depend on
+       `"@n2k/solver": "*"`. This unwinds the dual typecheck (root
+       tsc + web tsc -b each compile the solver), formalizes the
+       contract, and makes the future "publish solver as a package"
+       option a one-line change.
+
+ARCHITECTURAL OPTIONS (pick ONE if you want a sweeping change):
+  A1. "Solidify and ship". Treat the current product as feature-
+      complete. Land L6 (workspace), L1 (browser-side export), and
+      M8 (CI). Skip Advanced Mode entirely. Result: small,
+      maintainable repo that any contributor can own.
+  A2. "Lean into the almanac". Keep the editions, kill the CLI as a
+      product surface (it stays as a dev tool), and double down on
+      the web app: more visualizations, embeddable widgets, sharable
+      compositions, deep-link competition plans (Phase 5 of roadmap).
+      The CLI then exists just to refresh the dataset.
+  A3. "Become the algorithm playground". Generalize the solver to
+      arbitrary arity (≥1) and treat the heuristic as user-editable
+      (publish weights as JSON, allow users to A/B their own
+      heuristic). Calibrate with a labeled corpus. Result: useful
+      to other recreational-math researchers, not just N2K players.
+
+================================================================================
+END OF FILE
+================================================================================

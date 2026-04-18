@@ -1,0 +1,47 @@
+# Environment variables - NEVER commit these
+.env
+.env.*
+*.env
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.vitest-cache/
+tc_out.log
+*.log
+
+# Local Æther / advanced-mode smoke runs (binary .n2k chunks)
+tmp-aether-smoke/
+*.n2k
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local export output
+tmp/
+*.ndjson
+*.manifest.json
+data-raw/
+
+# Web build / generated data
+web/dist/
+web/public/data/
+.playwright-mcp/
+
+# Stray PNGs are noise (mostly accidental drag-and-drops or screenshots)
+# but reference shots under docs/screens/ are intentional and tracked.
+*.png
+!docs/screens/*.png
+
+# Legacy Python artifacts
+venv/
+__pycache__/
