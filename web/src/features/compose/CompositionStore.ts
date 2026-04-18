@@ -267,32 +267,50 @@ export class CompositionStore {
   // -------------------------------------------------------------------------
 
   /**
-   * Build the share-friendly snapshot of the current plan. Excludes
-   * generated previews/results since seeded runs reproduce them; keeps
-   * the URL payload small enough for typical 4-board plans to fit in a
-   * few hundred bytes.
+   * Build the share-friendly snapshot of the current plan.
+   *
+   * v2 (current): also embeds each board's generated `preview` (cells)
+   * and `result` (BalancedRollsResult) when present. That makes a shared
+   * link fully self-contained — the recipient sees the same dice rolls
+   * the sender saw, without needing the dataset, a re-run, or even a
+   * matching seed.
+   *
+   * Boards that haven't been generated yet contribute no extra bytes,
+   * so an unrun plan still serializes as compactly as v1.
    */
-  snapshot(): SharedPlanV1 {
+  snapshot(): SharedPlanV2 {
     return {
-      version: 1,
+      version: 2,
       pool: this.candidatePool,
       timeBudget: this.timeBudget,
       seed: this.seed,
-      boards: this.boards.map((b) => ({
-        kind: b.kind,
-        rangeMin: b.rangeMin,
-        rangeMax: b.rangeMax,
-        multiples: [...b.multiples],
-        patternStart: b.patternStart,
-        rounds: b.rounds,
-        overrides: [...b.overrides.entries()].map(([slot, value]) => [slot, value]),
-      })),
+      boards: this.boards.map((b) => {
+        const board: SharedBoardV2 = {
+          kind: b.kind,
+          rangeMin: b.rangeMin,
+          rangeMax: b.rangeMax,
+          multiples: [...b.multiples],
+          patternStart: b.patternStart,
+          rounds: b.rounds,
+          overrides: [...b.overrides.entries()].map(([slot, value]) => [slot, value]),
+        };
+        if (b.preview !== null) board.preview = [...b.preview];
+        if (b.result !== null) board.result = cloneResult(b.result);
+        return board;
+      }),
     };
   }
 
-  /** Replace the in-memory plan with a decoded snapshot. */
-  applySnapshot(plan: SharedPlanV1): void {
-    if (plan.version !== 1) return;
+  /**
+   * Replace the in-memory plan with a decoded snapshot.
+   *
+   * Accepts both v1 (configs only) and v2 (configs + preview + result)
+   * envelopes. v2 boards with embedded results are restored straight
+   * to `status: "ready"` so `CompetitionResults` renders immediately —
+   * no Generate click required.
+   */
+  applySnapshot(plan: SharedPlanV1 | SharedPlanV2): void {
+    if (plan.version !== 1 && plan.version !== 2) return;
     this.candidatePool = plan.pool;
     this.timeBudget = plan.timeBudget;
     this.seed = plan.seed;
@@ -312,6 +330,15 @@ export class CompositionStore {
       for (const [slot, value] of b.overrides) {
         board.overrides.set(slot, value);
       }
+      // v2 only — back-compat with v1 that lacks these fields.
+      if (plan.version === 2) {
+        const v2 = b as SharedBoardV2;
+        if (v2.preview !== undefined) board.preview = [...v2.preview];
+        if (v2.result !== undefined) {
+          board.result = cloneResult(v2.result);
+          board.status = "ready";
+        }
+      }
     });
   }
 
@@ -327,7 +354,7 @@ export class CompositionStore {
   async loadFromUrl(): Promise<boolean> {
     const raw = readHash("plan", COMPOSE_PLAN_SCHEMA);
     if (raw === null) return false;
-    const decoded = await decodeShareable<SharedPlanV1>(raw);
+    const decoded = await decodeShareable<SharedPlanV1 | SharedPlanV2>(raw);
     if (decoded === null) return false;
     runInAction(() => this.applySnapshot(decoded));
     return true;
@@ -416,6 +443,61 @@ export interface SharedPlanV1 {
     rounds: number;
     overrides: Array<[number, number]>;
   }>;
+}
+
+/**
+ * v2: same envelope as v1 plus optional generated state per board so a
+ * shared link can drop the recipient straight into the results view.
+ *
+ * `preview` and `result` are optional — boards that haven't been
+ * generated yet contribute zero extra bytes to the URL, so a "share
+ * before generating" link is the same size as a v1 envelope.
+ */
+export interface SharedBoardV2 {
+  kind: "random" | "pattern";
+  rangeMin: number;
+  rangeMax: number;
+  multiples: number[];
+  patternStart: number;
+  rounds: number;
+  overrides: Array<[number, number]>;
+  /** Generated 36-cell board (row-major). Present iff the board was generated. */
+  preview?: number[];
+  /** Generated balanced rolls + per-player totals. Present iff generated. */
+  result?: BalancedRollsResult;
+}
+
+export interface SharedPlanV2 {
+  version: 2;
+  pool: CandidatePoolId;
+  timeBudget: TimeBudgetPreset;
+  seed: string;
+  boards: SharedBoardV2[];
+}
+
+/**
+ * Defensive deep-copy of a `BalancedRollsResult` so the snapshot envelope
+ * doesn't share references with the live store (and so a decoded result
+ * gets a fresh, mutable-shaped object rather than `Object.freeze`-style
+ * `readonly` frozen JSON).
+ */
+function cloneResult(result: BalancedRollsResult): BalancedRollsResult {
+  return {
+    rounds: result.rounds.map((r) => ({
+      p1: [r.p1[0], r.p1[1], r.p1[2]] as const,
+      p2: [r.p2[0], r.p2[1], r.p2[2]] as const,
+      p1Difficulty: r.p1Difficulty,
+      p2Difficulty: r.p2Difficulty,
+      p1ExpectedScore: r.p1ExpectedScore,
+      p2ExpectedScore: r.p2ExpectedScore,
+    })),
+    p1TotalDifficulty: result.p1TotalDifficulty,
+    p2TotalDifficulty: result.p2TotalDifficulty,
+    difficultyDelta: result.difficultyDelta,
+    p1TotalExpectedScore: result.p1TotalExpectedScore,
+    p2TotalExpectedScore: result.p2TotalExpectedScore,
+    expectedScoreDelta: result.expectedScoreDelta,
+  };
 }
 
 /**

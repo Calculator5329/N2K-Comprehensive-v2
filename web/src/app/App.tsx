@@ -34,6 +34,19 @@ const Bootstrap = observer(function Bootstrap() {
   // Konami listener — global, single-attach, cleaned up on unmount.
   useEffect(() => store.secret.attach(), [store]);
 
+  // Mirror Æther-mode state onto `<html data-aether="1">` so the CSS
+  // overlay block in `globals.css` can layer Æther treatments on top of
+  // any active theme. Read inside the effect so the observer dep is
+  // explicit; ThemeStore uses the same pattern for `data-theme`.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (store.secret.aetherActive) {
+      document.documentElement.setAttribute("data-aether", "1");
+    } else {
+      document.documentElement.removeAttribute("data-aether");
+    }
+  }, [store.secret.aetherActive]);
+
   return (
     <PageShell>
       <ViewSwitch />
@@ -42,7 +55,18 @@ const Bootstrap = observer(function Bootstrap() {
 });
 
 export function App() {
-  const store = useMemo(() => new AppStore(), []);
+  const store = useMemo(() => {
+    const next = new AppStore();
+    // Permalink routing: a `#plan=…` hash unambiguously belongs to the
+    // Compose feature (#17), so dropping a shared link into a fresh
+    // browser should land on Compose with the results already on screen.
+    // Done here, before the view tree mounts, so there's no flash of
+    // the default Lookup page.
+    if (typeof window !== "undefined" && /(^|&)plan=/.test(window.location.hash)) {
+      next.setView("compose");
+    }
+    return next;
+  }, []);
   return (
     <StoreProvider store={store}>
       <Bootstrap />

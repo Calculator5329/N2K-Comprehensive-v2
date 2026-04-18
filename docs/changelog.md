@@ -2,6 +2,62 @@
 
 Running log of session work.
 
+## Unreleased — Compose: shared link includes the rolled boards, lands on the Compose tab
+
+Reported behaviour: copy-pasting a "Share plan" URL into a fresh browser
+opened the default Lookup tab and, even after navigating to Compose,
+showed empty boards — the recipient had to click *Generate* and (with
+no shared seed) saw a different competition than the sender did.
+
+Two root causes:
+
+1. The shared payload (`SharedPlanV1`) only carried the **inputs** —
+   board kind, range, multiples, pinned overrides, candidate pool, time
+   budget, optional seed. The `preview` (rolled cells) and `result`
+   (`BalancedRollsResult` with per-round dice and totals) were
+   deliberately omitted "since seeded runs reproduce them". They don't,
+   when no seed is set.
+2. The presence of a `#plan=` hash had no effect on the initial view —
+   `AppStore.view` defaulted to `"lookup"`, and the Compose-side
+   `loadFromUrl` only ran once the user manually opened that tab.
+
+Fixes:
+
+- **`web/src/features/compose/CompositionStore.ts`** — bumped the share
+  envelope to `SharedPlanV2`. Each board may optionally carry its
+  generated `preview: number[]` and `result: BalancedRollsResult`.
+  `snapshot()` writes them in lockstep with the live store; ungenerated
+  boards stay byte-for-byte the same as v1, so a "share before
+  generating" link keeps the small payload. `applySnapshot()` accepts
+  both v1 (legacy permalinks, status stays `"idle"`) and v2 (status
+  flips to `"ready"` per board, results render immediately).
+- **`web/src/app/App.tsx`** — at boot, before the view tree mounts, if
+  `window.location.hash` matches `(^|&)plan=` the root store snaps
+  `view = "compose"`. Pasting a shared link now routes straight to
+  Compose with no flash of the default page.
+- **`web/tests/CompositionStore.test.ts`** — replaced the now-stale
+  "envelope excludes preview/result" assertion with a per-field
+  `not.toHaveProperty` check (compactness preserved for ungenerated
+  boards). Added a v2 round-trip test asserting cells, per-round dice,
+  and the headline `expectedScoreDelta` survive the URL trip, plus a
+  v1 back-compat test ensuring legacy links still load and leave
+  boards in `"idle"` state.
+
+Technical notes:
+
+- A `BalancedRollsResult` is plain data (no class instances, no
+  `Map`s), so the existing JSON → DEFLATE-RAW → base64url codec
+  handles it losslessly. A 4-board × 4-round plan adds ~700 bytes
+  after compression — well inside the practical URL budget. Bundle
+  size grew ~13 KB un-gzipped from the new types + helper.
+- The display path (`CompetitionResults`) reads only `board.preview`,
+  `board.result`, and `board.overrides`. None of those need the
+  dataset, the resolver, or a worker, so a v2 paste-load shows the
+  full competition immediately — no chunk fetches, no progress bar.
+- Schema versioning is opt-in per feature (each `HashSchema` owns its
+  own version prefix), so this bump is invisible to other features
+  that share the URL hash.
+
 ## Unreleased — Æther mode integration across every standard view
 
 The Æther variant — originally a single hidden `AetherView` page added
