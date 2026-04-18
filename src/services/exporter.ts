@@ -2,6 +2,7 @@ import { createWriteStream } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { mkdir } from "node:fs/promises";
+import { isLegalDiceTriple } from "../core/constants.js";
 import type { DiceTriple } from "../core/types.js";
 import { formatEquation } from "./parsing.js";
 import { solveForAllTargets, type SolverOptions } from "./solver.js";
@@ -20,6 +21,16 @@ export function enumerateUnorderedTriples(min: number, max: number): DiceTriple[
     }
   }
   return triples;
+}
+
+/**
+ * Like {@link enumerateUnorderedTriples} but skips triples that violate
+ * the game's roll-legality rules (see {@link isLegalDiceTriple}). This is
+ * the canonical enumerator for anything that needs to mirror the playable
+ * dice space — the bulk exporter, dataset indices, candidate pools, etc.
+ */
+export function enumerateLegalDiceTriples(min: number, max: number): DiceTriple[] {
+  return enumerateUnorderedTriples(min, max).filter(isLegalDiceTriple);
 }
 
 /** Run-time options for {@link exportAllSolutions}. */
@@ -110,7 +121,7 @@ export async function exportAllSolutions(
 
   await mkdir(dirname(outputPath), { recursive: true });
 
-  const triples = enumerateUnorderedTriples(diceMin, diceMax);
+  const triples = enumerateLegalDiceTriples(diceMin, diceMax);
   const stream = createWriteStream(outputPath, { encoding: "utf8" });
 
   let recordsWritten = 0;

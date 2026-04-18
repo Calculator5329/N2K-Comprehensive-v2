@@ -5,8 +5,9 @@
  *     `DICE_COMBINATIONS` from the solver. Mirrors the original game's
  *     "normal" dice set.
  *   - Extensive        — every unordered (a, b, c) triple in `[1, 20]`,
- *     filtered to drop the all-same triples (the game forbids them). Built
- *     lazily once on first access; ~1,540 entries.
+ *     filtered to drop game-illegal rolls (all-same triples and triples
+ *     with two or more `1`s — see `isLegalDiceTriple`). Built lazily once
+ *     on first access; 1,501 entries.
  *   - Æther sample     — the arity-3 slice of the canonical Æther sample
  *     (`AETHER_SAMPLE`). Only exposed in Æther mode (see the gating in
  *     `ComposeView`). Smaller than `extensive` but the *same* triples
@@ -18,7 +19,10 @@
  * `DataStore.detail`, which only carries stats for the bundled dataset.
  */
 import type { DiceTriple } from "../core/types";
-import { DICE_COMBINATIONS as STANDARD } from "@solver/core/constants.js";
+import {
+  DICE_COMBINATIONS as STANDARD,
+  isLegalDiceTriple,
+} from "@solver/core/constants.js";
 import { AETHER_SAMPLE } from "./aetherSample";
 
 export type CandidatePoolId = "standard" | "extensive" | "aetherSample";
@@ -39,8 +43,9 @@ function buildExtensive(): readonly DiceTriple[] {
   for (let a = 1; a <= 20; a += 1) {
     for (let b = a; b <= 20; b += 1) {
       for (let c = b; c <= 20; c += 1) {
-        if (a === b && b === c) continue;
-        triples.push([a, b, c]);
+        const triple: DiceTriple = [a, b, c];
+        if (!isLegalDiceTriple(triple)) continue;
+        triples.push(triple);
       }
     }
   }
@@ -79,9 +84,10 @@ export const CANDIDATE_POOLS: readonly CandidatePoolMeta[] = [
   },
   {
     id: "extensive",
-    label: "Extensive (1,540)",
-    description: "Every unordered (a, b, c) ∈ [1, 20]. Slower to fetch.",
-    size: 1540,
+    label: "Extensive (1,501)",
+    description:
+      "Every legal unordered (a, b, c) ∈ [1, 20]. Slower to fetch.",
+    size: buildExtensive().length,
   },
 ];
 

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { observer } from "mobx-react-lite";
 import { useStore } from "../../stores/storeContext";
+import { useAlmanacIndex } from "../../stores/useAlmanacIndex";
 import { ThemeSelector } from "../ThemeSelector";
 import { useNavItems, FOOTER_COLOPHON, type NavItem as NavItemT } from "../nav";
 import { THEMES, type Theme } from "../../core/themes";
@@ -36,7 +37,7 @@ export const BoardLayout = observer(function BoardLayout({
   children: ReactNode;
 }) {
   const store = useStore();
-  const index = store.data.index;
+  const index = useAlmanacIndex();
   const themeId = store.theme.theme;
   const themeMeta = THEMES[themeId];
   const navItems = useNavItems();
@@ -48,15 +49,17 @@ export const BoardLayout = observer(function BoardLayout({
     // (each chart owner is responsible for its own overflow handling),
     // and the chrome itself stays pristine.
     <div className="min-h-screen w-full overflow-x-hidden">
-      <div className="mx-auto max-w-[1300px] px-3 py-6 sm:px-6 sm:py-10 lg:px-10 lg:py-14">
+      <div className="board-layout-wrap mx-auto max-w-[1300px] px-3 py-6 sm:px-6 sm:py-10 lg:px-10 lg:py-14">
 
-        {/* ── Outer NAVY FRAME with corner brackets ─────────────────── */}
+        {/* ── Outer NAVY FRAME with corner brackets ───────────────────
+            `board-layout-frame` lets the print stylesheet strip the
+            navy fill, the inset shadows, and the corner brackets so
+            the printed sheet is just ink on paper. */}
         <div
-          className="relative p-[10px] sm:p-[14px] lg:p-[16px]"
+          className="board-layout-frame relative p-[10px] sm:p-[14px] lg:p-[16px]"
           style={{
             background: "rgb(var(--accent-500))",
             border: "2px solid rgb(var(--ink-500))",
-            // Hard offset shadow — a wooden box sitting on the table.
             boxShadow:
               "6px 6px 0 0 rgba(0, 0, 0, 0.20)," +
               "inset 0 0 0 1px rgba(255, 255, 255, 0.06)",
@@ -64,53 +67,53 @@ export const BoardLayout = observer(function BoardLayout({
         >
           {/* white inset hairline (the "metal" highlight on the frame) */}
           <div
-            className="pointer-events-none absolute inset-[3px] sm:inset-[4px] lg:inset-[5px]"
+            className="no-print pointer-events-none absolute inset-[3px] sm:inset-[4px] lg:inset-[5px]"
             style={{ border: "1px solid rgba(255, 255, 255, 0.32)" }}
           />
           {/* second, finer inset (the brass channel) */}
           <div
-            className="pointer-events-none absolute inset-[6px] sm:inset-[7px] lg:inset-[9px]"
+            className="no-print pointer-events-none absolute inset-[6px] sm:inset-[7px] lg:inset-[9px]"
             style={{ border: "1px solid rgba(255, 255, 255, 0.10)" }}
           />
 
-          {/* True L-shaped corner brackets — like steamer-trunk corners. */}
-          <CornerBracket pos="tl" />
-          <CornerBracket pos="tr" />
-          <CornerBracket pos="bl" />
-          <CornerBracket pos="br" />
+          {/* True L-shaped corner brackets — chrome-only, suppressed on print. */}
+          <div className="no-print contents">
+            <CornerBracket pos="tl" />
+            <CornerBracket pos="tr" />
+            <CornerBracket pos="bl" />
+            <CornerBracket pos="br" />
+          </div>
 
           {/* ── Inner butter-yellow play surface ─────────────────── */}
           <div
-            className="relative px-3 py-5 sm:px-7 sm:py-7 lg:px-10 lg:py-9"
+            className="board-layout-card relative px-3 py-5 sm:px-7 sm:py-7 lg:px-10 lg:py-9"
             style={{
               background: "rgb(var(--paper-50))",
               border: "1px solid rgb(var(--ink-500))",
             }}
           >
-            {/* Faint dashed registration ring on the play surface — the
-                way real board art shows the print-bleed line. Hidden on
-                very narrow widths where it would crowd the content. */}
+            {/* Faint dashed registration ring on the play surface. */}
             <div
-              className="pointer-events-none absolute inset-[6px] hidden sm:block"
+              className="no-print pointer-events-none absolute inset-[6px] hidden sm:block"
               style={{ border: "1px dashed rgba(0, 0, 0, 0.12)" }}
             />
 
-            {/* ── Masthead row ─────────────────────────────────── */}
-            <Masthead themeMeta={themeMeta} index={index} />
+            {/* ── Masthead row — screen-only ─────────────────── */}
+            <div className="no-print">
+              <Masthead themeMeta={themeMeta} index={index} />
+              <BoardRule />
 
-            <BoardRule />
+              <nav
+                aria-label="Sections"
+                className="my-4 sm:my-5 flex items-stretch gap-1.5 sm:gap-2 flex-wrap"
+              >
+                {navItems.map((item) => (
+                  <BoardNavTile key={item.id} item={item} />
+                ))}
+              </nav>
 
-            {/* ── Navigation row — game-tile buttons ────────────── */}
-            <nav
-              aria-label="Sections"
-              className="my-4 sm:my-5 flex items-stretch gap-1.5 sm:gap-2 flex-wrap"
-            >
-              {navItems.map((item) => (
-                <BoardNavTile key={item.id} item={item} />
-              ))}
-            </nav>
-
-            <BoardRule />
+              <BoardRule />
+            </div>
 
             {/* ── Body ─────────────────────────────────────────── */}
             <main className="my-5 sm:my-6 min-w-0">
@@ -119,28 +122,26 @@ export const BoardLayout = observer(function BoardLayout({
               </div>
             </main>
 
-            <BoardRule />
-
-            {/* ── Box-back footer: stamp + colophon + discreet switcher ── */}
-            <footer className="mt-4 sm:mt-5 grid grid-cols-12 gap-3 sm:gap-4 items-start sm:items-center">
-              {/* Patent / edition stamp — corner of the box */}
-              <div className="col-span-12 sm:col-span-4 flex sm:block justify-center">
-                <PatentStamp themeMeta={themeMeta} />
-              </div>
-
-              {/* Colophon line — centered on a real box back */}
-              <div className="col-span-12 sm:col-span-4 text-center text-[11px] font-body text-ink-300 leading-snug">
-                <div className="font-display uppercase text-accent-500 tracking-[0.16em] text-[10px] mb-1">
-                  Colophon
+            {/* ── Box-back footer: screen-only ─────────────────── */}
+            <div className="no-print">
+              <BoardRule />
+              <footer className="mt-4 sm:mt-5 grid grid-cols-12 gap-3 sm:gap-4 items-start sm:items-center">
+                <div className="col-span-12 sm:col-span-4 flex sm:block justify-center">
+                  <PatentStamp themeMeta={themeMeta} />
                 </div>
-                <div>{FOOTER_COLOPHON[themeId]}</div>
-              </div>
 
-              {/* Discreet edition switcher — a small swatch on the box back */}
-              <div className="col-span-12 sm:col-span-4 flex justify-center sm:justify-end">
-                <ThemeSelector orientation="discreet" />
-              </div>
-            </footer>
+                <div className="col-span-12 sm:col-span-4 text-center text-[11px] font-body text-ink-300 leading-snug">
+                  <div className="font-display uppercase text-accent-500 tracking-[0.16em] text-[10px] mb-1">
+                    Colophon
+                  </div>
+                  <div>{FOOTER_COLOPHON[themeId]}</div>
+                </div>
+
+                <div className="col-span-12 sm:col-span-4 flex justify-center sm:justify-end">
+                  <ThemeSelector orientation="discreet" />
+                </div>
+              </footer>
+            </div>
           </div>
         </div>
       </div>

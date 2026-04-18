@@ -11,7 +11,7 @@ import {
 import { BOARD } from "@solver/core/constants.js";
 import { DataStore } from "../../stores/DataStore";
 import {
-  ensureCandidatesLoaded,
+  ensureDifficultyMatrixLoaded,
   makeDataStoreResolver,
 } from "../../services/competitionService";
 import {
@@ -200,8 +200,9 @@ export class CompositionStore {
 
     try {
       const candidates = getCandidatePool(this.candidatePool);
-      // Phase 1 — make sure all dice chunks are loaded.
-      await ensureCandidatesLoaded(this.dataStore, candidates, {
+      // Phase 1 — load the bundled difficulty matrix once. Cached for
+      // the page lifetime, so subsequent generations skip the wait.
+      await ensureDifficultyMatrixLoaded(this.dataStore, {
         onProgress: (loaded, total) => {
           runInAction(() => {
             this.loadProgress = total === 0 ? 1 : loaded / total;

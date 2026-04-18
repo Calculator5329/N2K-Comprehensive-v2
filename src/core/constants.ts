@@ -38,6 +38,27 @@ export const SYMBOL_TO_OPERATOR: Readonly<Record<OperatorSymbol, Operator>> = {
 /** Every operator code, in canonical order. Useful for enumeration. */
 export const ALL_OPERATORS: readonly Operator[] = [1, 2, 3, 4];
 
+/**
+ * Returns true if a dice triple is legal under N2K's roll rules.
+ *
+ * Two rules are enforced:
+ *   1. **All-same triples** (e.g. `(5, 5, 5)`) — the original game forbids
+ *      these because every operator collapses to a degenerate single value.
+ *   2. **More than one `1`** (e.g. `(1, 1, 4)`, `(1, 1, 1)`) — at least two
+ *      `1`s leaves the third die effectively alone after multiplication or
+ *      division by 1, so the roll never produces an interesting equation.
+ *      Triples with exactly one `1` (e.g. `(3, 3, 1)`) are still legal.
+ *
+ * Order does not matter; the predicate works on any permutation.
+ */
+export function isLegalDiceTriple(triple: DiceTriple): boolean {
+  const [a, b, c] = triple;
+  if (a === b && b === c) return false;
+  const ones = (a === 1 ? 1 : 0) + (b === 1 ? 1 : 0) + (c === 1 ? 1 : 0);
+  if (ones >= 2) return false;
+  return true;
+}
+
 /** Canonical list of dice combinations used for board difficulty analysis. */
 export const DICE_COMBINATIONS: readonly DiceTriple[] = [
   [2, 2, 2],  [2, 2, 3],  [2, 2, 5],  [2, 2, 6],  [2, 2, 7],  [2, 2, 10],

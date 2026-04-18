@@ -18,8 +18,10 @@ Core (src/core) — types, constants, binary format
 ```
 
 Web layouts depend on `useNavItems()` (hook in `web/src/ui/nav.ts`),
-which itself observes `AppStore.secret.unlocked` and conditionally
-appends the hidden "Æther" entry to the nav list.
+which returns the same five-tab nav regardless of mode. Æther mode
+swaps the *contents* of each tab, not the tab list — see
+`SecretStore.aetherActive` and the `Aether*View` siblings of each
+primary view.
 
 ## Standard mode constants
 
@@ -83,8 +85,17 @@ Once unlocked:
 
 - CLI prompt becomes `Æ Enter a command: ` and Command #10 (advanced
   solve) becomes available; Command #9 prompts for advanced exporter.
-- Web app shows the "Æther" nav entry (folio = "Æ"), the lazy-loaded
-  `AetherView`, and a ✦ glyph in the Sidebar layout footer.
+- Web app activates `secret.aetherActive`, which causes every primary
+  view to swap to its `Aether*View` sibling:
+  | Tab       | Standard view             | Æther view             |
+  | --------- | ------------------------- | ---------------------- |
+  | Lookup    | `LookupView` (3 dice, 1..999)   | `AetherLookupView` (3-5 dice, 1..5,000) |
+  | Explore   | `ExploreView` (full 1,540-tuple table) | `AetherExploreView` (sample of ~3,300 tuples, paginated, search) |
+  | Compare   | `CompareView` (up to 4 triples) | `AetherCompareView` (up to 4 mixed-arity tuples) |
+  | Visualize | `VisualizeView` (heatmap + scatter + histograms) | `AetherVisualizeView` (per-tuple band + opt-in sampled atlas) |
+  | Compose   | `ComposeView` (standard pools)  | `ComposeView` + Æther-sample pool + Æther note |
+- Nav badge `✧` (unlocked, standard mode) becomes `✦` (active) and
+  doubles as a click-to-toggle.
 
 ## Worker model
 
@@ -97,6 +108,17 @@ Once unlocked:
   (`aetherSolverService.ts`) that maintains a pool of up to
   `navigator.hardwareConcurrency - 1` workers. Each request gets a
   monotonic id; replies are routed back via a `Map<id, handlers>`.
+  Two request kinds:
+  - `"solve"` — single target, auto-arity (3 → 4 → 5).
+  - `"sweep"` — every target in `[minTotal, maxTotal]` for a fixed
+    arity. Cheap because `solveAdvancedForAllTargets` amortizes
+    enumeration across the entire target range. This is the primitive
+    the all-tabs Æther integration is built on.
+
+`AetherDataStore` (web/src/stores) sits on top of the service as a
+lazy per-tuple sweep cache. Concurrent requests for the same tuple
+are deduped via an in-flight `Map<key, Promise>`. Summaries are
+derived on first read and memoized.
 
 ## API contracts (key shapes)
 
@@ -110,11 +132,44 @@ export interface NEquation {
   readonly total: number;
 }
 
-// web aether worker reply
+// web aether worker reply (single-target solve)
 export interface AetherWorkerSolution {
   readonly equation: string;     // human-readable, parens for negative bases
   readonly arity: number;        // 3 | 4 | 5
   readonly difficulty: number;   // advDifficultyOfEquation
   readonly elapsedMs: number;    // perf measurement for the UI
+}
+
+// web aether worker reply (whole-tuple sweep)
+export type AetherSweepRow = readonly [
+  target: number,
+  equation: string,
+  difficulty: number,
+];
+export interface AetherSweepResult {
+  readonly arity: number;
+  readonly elapsedMs: number;
+  readonly rows: readonly AetherSweepRow[];
+}
+
+// AetherDataStore-side view of a sweep (after inflate)
+export interface AetherTupleSweep {
+  readonly tuple: AetherTuple;
+  readonly arity: AetherArity;
+  readonly elapsedMs: number;
+  readonly cells: ReadonlyMap<number, AetherCell>;
+  readonly targetsSorted: readonly number[];
+}
+
+// Lazy per-tuple summary, derived from AetherTupleSweep
+export interface AetherTupleSummary {
+  readonly tuple: AetherTuple;
+  readonly arity: AetherArity;
+  readonly solvableCount: number;
+  readonly impossibleCount: number;
+  readonly minDifficulty: number | null;
+  readonly maxDifficulty: number | null;
+  readonly averageDifficulty: number | null;
+  readonly medianDifficulty: number | null;
 }
 ```

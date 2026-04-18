@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  enumerateLegalDiceTriples,
   enumerateUnorderedTriples,
   exportAllSolutions,
   type ExportManifest,
@@ -29,6 +30,24 @@ describe("enumerateUnorderedTriples", () => {
 
   it("rejects inverted ranges", () => {
     expect(() => enumerateUnorderedTriples(5, 3)).toThrow(RangeError);
+  });
+});
+
+describe("enumerateLegalDiceTriples", () => {
+  it("filters out all-same triples and triples with two or more 1s", () => {
+    const triples = enumerateLegalDiceTriples(1, 4);
+    // C(4+2, 3) = 20; minus all-same {(1,1,1),(2,2,2),(3,3,3),(4,4,4)} = 4;
+    // minus extra >=2-ones triples {(1,1,2),(1,1,3),(1,1,4)} = 3 → 13.
+    expect(triples).toHaveLength(13);
+    for (const [a, b, c] of triples) {
+      expect(a === b && b === c).toBe(false);
+      const ones = (a === 1 ? 1 : 0) + (b === 1 ? 1 : 0) + (c === 1 ? 1 : 0);
+      expect(ones).toBeLessThan(2);
+    }
+  });
+
+  it("produces 1,501 legal triples over the standard 1..20 range", () => {
+    expect(enumerateLegalDiceTriples(1, 20)).toHaveLength(1501);
   });
 });
 
@@ -118,9 +137,11 @@ describe("exportAllSolutions", () => {
       totalMax: 5,
       onProgress: ({ done, total }) => {
         calls.push(done);
-        expect(total).toBe(4); // C(2+2, 3) = 4
+        // C(2+2, 3) = 4 unordered triples; (2,2,2) and (3,3,3) are
+        // all-same and therefore illegal, leaving 2 legal triples.
+        expect(total).toBe(2);
       },
     });
-    expect(calls).toEqual([1, 2, 3, 4]);
+    expect(calls).toEqual([1, 2]);
   });
 });

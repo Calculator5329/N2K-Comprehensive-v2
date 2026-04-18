@@ -15,6 +15,7 @@
 import AetherWorker from "./aetherSolverWorker?worker";
 import type {
   AetherSolveRequest,
+  AetherSweepProgressPayload,
   AetherSweepRequest,
   AetherSweepResult,
   AetherWorkerResponse,
@@ -31,6 +32,7 @@ interface PendingSweep {
   readonly kind: "sweep";
   readonly resolve: (value: AetherSweepResult) => void;
   readonly reject: (error: Error) => void;
+  readonly onProgress?: (progress: AetherSweepProgressPayload) => void;
 }
 
 type PendingRequest = PendingSolve | PendingSweep;
@@ -58,6 +60,15 @@ function ensureWorker(): WorkerSlot {
       const r = event.data;
       const handlers = pending.get(r.id);
       if (handlers === undefined) return;
+      // `sweep-progress` is a streaming notification, not a terminal
+      // reply — keep the request pending and just forward to the
+      // caller's progress callback (if any).
+      if (r.kind === "sweep-progress") {
+        if (handlers.kind === "sweep" && handlers.onProgress !== undefined) {
+          handlers.onProgress(r.progress);
+        }
+        return;
+      }
       pending.delete(r.id);
       const slot = pool.find((s) => s.worker === worker);
       if (slot) slot.inFlight = Math.max(0, slot.inFlight - 1);
@@ -128,16 +139,24 @@ export function sweepAdvanced(
   dice: readonly number[],
   minTotal: number,
   maxTotal: number,
+  onProgress?: (progress: AetherSweepProgressPayload) => void,
 ): Promise<AetherSweepResult> {
   const slot = ensureWorker();
   slot.inFlight += 1;
   const id = nextId++;
   const request: AetherSweepRequest = { id, kind: "sweep", dice, minTotal, maxTotal };
   return new Promise<AetherSweepResult>((resolve, reject) => {
-    pending.set(id, { kind: "sweep", resolve, reject });
+    // Spread `onProgress` only when defined — `exactOptionalPropertyTypes`
+    // forbids `{ onProgress: undefined }` against an `onProgress?:` field.
+    pending.set(id, {
+      kind: "sweep",
+      resolve,
+      reject,
+      ...(onProgress !== undefined ? { onProgress } : {}),
+    });
     slot.worker.postMessage(request);
   });
 }
 
-export type { AetherWorkerSolution, AetherSweepResult };
+export type { AetherWorkerSolution, AetherSweepResult, AetherSweepProgressPayload };
 export type { AetherSweepRow } from "./aetherSolverWorker";

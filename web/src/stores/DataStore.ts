@@ -4,6 +4,7 @@ import type {
   DatasetIndex,
   DiceDetail,
   DiceTriple,
+  DifficultyMatrix,
   Loadable,
   TargetStatsEntry,
 } from "../core/types";
@@ -23,6 +24,7 @@ export class DataStore {
   index: Loadable<DatasetIndex> = { status: "idle" };
   byTarget: Loadable<Readonly<Record<string, ByTargetEntry | null>>> = { status: "idle" };
   targetStats: Loadable<Readonly<Record<string, TargetStatsEntry>>> = { status: "idle" };
+  difficultyMatrix: Loadable<DifficultyMatrix> = { status: "idle" };
 
   /** Lazy cache of dice-detail files keyed by `"a-b-c"`. */
   private readonly diceCache = new Map<string, Loadable<DiceDetail>>();
@@ -34,6 +36,7 @@ export class DataStore {
       loadIndex: action,
       loadByTarget: action,
       loadTargetStats: action,
+      loadDifficultyMatrix: action,
       ensureDice: action,
     });
   }
@@ -91,6 +94,33 @@ export class DataStore {
       .catch((err: unknown) =>
         runInAction(() => {
           this.targetStats = { status: "error", error: String(err) };
+        }),
+      );
+  }
+
+  /**
+   * Load the equation-stripped difficulty matrix used by Compose. Cached
+   * for the lifetime of the page; safe to call repeatedly. Resolves on
+   * success and on error (state is mirrored on `difficultyMatrix`).
+   */
+  loadDifficultyMatrix(): Promise<void> {
+    if (
+      this.difficultyMatrix.status === "loading" ||
+      this.difficultyMatrix.status === "ready"
+    ) {
+      return Promise.resolve();
+    }
+    this.difficultyMatrix = { status: "loading" };
+    return datasetService
+      .loadDifficultyMatrix()
+      .then((value) =>
+        runInAction(() => {
+          this.difficultyMatrix = { status: "ready", value };
+        }),
+      )
+      .catch((err: unknown) =>
+        runInAction(() => {
+          this.difficultyMatrix = { status: "error", error: String(err) };
         }),
       );
   }

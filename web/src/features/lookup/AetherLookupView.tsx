@@ -7,6 +7,7 @@ import { DifficultyBreakdown } from "../../ui/DifficultyBreakdown";
 import { DifficultyMeter } from "../../ui/DifficultyMeter";
 import { PageHeader } from "../_shared/PageHeader";
 import type { AetherArity } from "../../core/types";
+import type { AetherTuplePartialSweep } from "../../stores/AetherDataStore";
 import { AetherLookupStore } from "./AetherLookupStore";
 
 /**
@@ -134,15 +135,23 @@ const SolutionPanel = observer(function SolutionPanel({
   const tuple = store.tuple;
   const sweepState = aetherData.sweepState(tuple);
 
-  if (sweepState.status === "idle" || sweepState.status === "loading") {
-    return <Skeleton />;
-  }
   if (sweepState.status === "error") {
     return (
       <div className="font-mono text-oxblood-500 text-sm">
         Æther solver failed for [{tuple.join(", ")}]: {sweepState.error}
       </div>
     );
+  }
+
+  // Pre-final renderings: prefer a streaming partial if the worker has
+  // posted one. The partial holds the running best-known equation per
+  // target — almost always non-empty after the first permutation, even
+  // at arity 5, so the user sees a real answer in ~400 ms instead of
+  // staring at a skeleton for two minutes.
+  if (sweepState.status === "idle" || sweepState.status === "loading") {
+    const partial = aetherData.partialFor(tuple);
+    if (partial === null) return <Skeleton />;
+    return <RunningSolution store={store} partial={partial} />;
   }
 
   const sweep = sweepState.value;
@@ -195,12 +204,136 @@ const SolutionPanel = observer(function SolutionPanel({
   );
 });
 
+/**
+ * Streaming partial-result panel. Mirrors the final `SolutionPanel`
+ * layout (equation + difficulty meter + adjacent-targets strip) but
+ * reads from the still-mutating partial sweep, with a "running" badge
+ * and progress meter so the user understands the answer may sharpen as
+ * remaining permutations finish.
+ */
+const RunningSolution = observer(function RunningSolution({
+  store,
+  partial,
+}: {
+  store: AetherLookupStore;
+  partial: AetherTuplePartialSweep;
+}) {
+  const cell = partial.cells.get(store.total);
+  const pct =
+    partial.permsTotal === 0
+      ? 0
+      : Math.min(100, Math.round((100 * partial.permsDone) / partial.permsTotal));
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-6 mb-3">
+        <div className="label-caps flex items-center gap-2">
+          <span>Easiest so far</span>
+          <RunningBadge />
+        </div>
+        {cell !== undefined && <DifficultyMeter difficulty={cell.difficulty} />}
+      </div>
+
+      {cell === undefined ? (
+        <p
+          className="font-display text-[28px] text-ink-200 leading-tight max-w-md italic"
+          style={{ fontVariationSettings: '"opsz" 144, "SOFT" 30' }}
+        >
+          No equation reaches{" "}
+          <span className="text-oxblood-500">{store.total.toLocaleString()}</span>{" "}
+          yet — checking remaining permutations.
+        </p>
+      ) : (
+        <>
+          <Equation equation={cell.equation} size="display" />
+          <DifficultyBreakdown equation={cell.equation} />
+        </>
+      )}
+
+      <div className="mt-10 no-print">
+        <PartialNeighborhoodStrip store={store} partial={partial} />
+      </div>
+
+      <div className="mt-6 space-y-1.5">
+        <ProgressBar pct={pct} />
+        <p className="text-[11px] font-mono text-ink-100">
+          Permutation {partial.permsDone} of {partial.permsTotal} ·{" "}
+          {(partial.elapsedMs / 1000).toFixed(1)}s elapsed ·{" "}
+          {partial.targetsSorted.length.toLocaleString()} targets solvable so far
+        </p>
+      </div>
+    </div>
+  );
+});
+
+function RunningBadge() {
+  return (
+    <span
+      aria-label="Solver still running"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wide-caps text-oxblood-500 border border-oxblood-500/40 bg-oxblood-500/5"
+      style={{ borderRadius: "2px" }}
+    >
+      <span className="inline-block w-1.5 h-1.5 rounded-full bg-oxblood-500 animate-pulse" />
+      Running
+    </span>
+  );
+}
+
+function ProgressBar({ pct }: { pct: number }) {
+  return (
+    <div
+      className="h-1 w-full max-w-[360px] bg-ink-100/15 overflow-hidden"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+      style={{ borderRadius: "1px" }}
+    >
+      <div
+        className="h-full bg-oxblood-500/70 transition-all duration-300"
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
 const NeighborhoodStrip = observer(function NeighborhoodStrip({
   store,
 }: {
   store: AetherLookupStore;
 }) {
   const { aetherData } = useStore();
+  const sweepState = aetherData.sweepState(store.tuple);
+  if (sweepState.status !== "ready") return null;
+  return (
+    <NeighborhoodStripCore store={store} cells={sweepState.value.cells} />
+  );
+});
+
+const PartialNeighborhoodStrip = observer(function PartialNeighborhoodStrip({
+  store,
+  partial,
+}: {
+  store: AetherLookupStore;
+  partial: AetherTuplePartialSweep;
+}) {
+  return <NeighborhoodStripCore store={store} cells={partial.cells} />;
+});
+
+/**
+ * Shared rendering for the adjacent-targets strip. Takes a cell map so
+ * it can be driven by either the final sweep or a streaming partial.
+ * Cells absent from the map render as "no solution yet" — visually
+ * identical between modes; the surrounding `RunningSolution` /
+ * `SolutionPanel` provide the "still searching" affordance.
+ */
+const NeighborhoodStripCore = observer(function NeighborhoodStripCore({
+  store,
+  cells,
+}: {
+  store: AetherLookupStore;
+  cells: ReadonlyMap<number, { equation: string; difficulty: number }>;
+}) {
   const activeButtonRef = useRef<HTMLButtonElement | null>(null);
   const refocusOnNextRender = useRef(false);
 
@@ -210,10 +343,6 @@ const NeighborhoodStrip = observer(function NeighborhoodStrip({
     }
     refocusOnNextRender.current = false;
   });
-
-  const sweepState = aetherData.sweepState(store.tuple);
-  if (sweepState.status !== "ready") return null;
-  const cells = sweepState.value.cells;
 
   const center = store.total;
   const radius = 5;
@@ -330,8 +459,8 @@ function Skeleton() {
       <div className="h-16 w-full max-w-[460px] bg-ink-100/10" />
       <div className="h-2 w-full max-w-[300px] bg-ink-100/10" />
       <div className="text-[11px] font-mono text-ink-100">
-        Solving every target for this tuple — typically &lt; 1 s for arity 3,
-        a few seconds at arity 4 or 5.
+        Warming up the Æther solver — first answer should appear within a
+        second or two; arity-5 sweeps continue refining for 1–3 minutes.
       </div>
     </div>
   );

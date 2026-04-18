@@ -1,114 +1,93 @@
-# Current task — Phase 7: Polish (tests + theme kit + a11y)
+# Current task — Æther mode visual signature + mode-aware almanac stats
 
-Status: **IN PROGRESS** (2026-04-18)
+Status: **DONE** (2026-04-18)
 
-The P0–P6 web upgrade is complete (see `roadmap.md`). Phase 7 is a
-polish pass focused on three additive tracks chosen because they
-**stay out of the way of an in-flight refactor of the app's
-component layout** — they add files, append CSS, and register a new
-theme rather than restructuring existing components.
+## Summary
 
-## Tracks
+The Konami unlock now reskins the entire almanac shell, not just the
+per-tab content. Two surfaces changed:
 
-### P7.1 — Web test coverage
+1. The dataset stats strip every layout renders
+   (Triples / Records / Targets / Compiled) now pulls from a synthetic
+   `DatasetIndex` when `secret.aetherActive` is true.
+2. The page chrome itself picks up an Æther-only style overlay,
+   layered on top of whichever theme is active.
 
-Stand up a vitest project for the `web/` workspace (the existing
-root vitest config covers `tests/**/*.test.ts` against `src/` only —
-nothing client-side is tested at the unit level). Tests focus on the
-data-shaped surfaces that already have well-defined contracts:
+## What shipped
 
-- `compressedHashCodec` — `encodeShareable` ↔ `decodeShareable`
-  round-trip, malformed-input rejection.
-- `urlHashState` — multi-key read/write, schema decode failure, the
-  `subscribeHash` signal.
-- `FavoritesStore` — `toggle` / `has` / `clear` against a fake
-  `localStorage`, plus persistence round-trip across instances.
-- `CompositionStore` — `snapshot()` / `applySnapshot()` round-trip
-  preserves the plan envelope.
-- Theme registry consistency — every `ThemeId` is present in
-  `THEMES`, `FOOTER_COLOPHON`, and the bootstrap allow-list inside
-  `web/index.html`.
+### Mode-aware almanac index — `useAlmanacIndex`
 
-Implementation choices:
+New hook at `web/src/stores/useAlmanacIndex.ts` that returns a
+`Loadable<DatasetIndex>`:
 
-- Use `happy-dom` instead of `jsdom` — lighter, faster, ships
-  `localStorage` + `window.location` natively.
-- Add `web/vitest.config.ts` rather than expanding the root config so
-  the root `vitest run` continues to be a Node-environment solver
-  test only — keeps boundaries crisp.
-- Add `npm test:web` script to `package.json`.
+- **Standard mode** → returns `data.index` unchanged (the on-disk
+  precomputed index).
+- **Æther mode** → returns a synthetic ready envelope with:
+  - `diceTriplesTotal` = `AETHER_UNIVERSE_TUPLE_COUNT` = **1,711,314**
+    (combinatorial tuple count across arities 3, 4, 5 over the full
+    `ADV_DICE_RANGE` of 43 values, computed via `multisetCount(43, k)`).
+  - `recordsWritten` = `AetherDataStore.cacheSize` (live tick).
+  - `totalMin`/`totalMax` = `ADV_TARGET_RANGE` (1..5,000).
+  - `diceMin`/`diceMax` = `ADV_DICE_RANGE` (-10..32).
+  - `generatedAt` reused from the standard index (or now()).
 
-### P7.2 — 17th edition + theme contribution kit
+All twelve layouts swapped from `store.data.index` to the hook with
+zero label changes — each kept its own copy ("Records" / "Routes" /
+"RECS=" / "Logged" / etc.) and just swapped the data source.
 
-Add a new edition (`herbarium` — Edwardian botanical specimen
-ledger) that exercises only existing layout / glyph / equation
-variants, so the registration is purely additive at Layer 1
-(`themes.ts`) + Layer 2 (`globals.css`) + bootstrap allowlist +
-colophon. This is the canonical small example a contributor can
-follow.
+### MobX observability fix
 
-Why Herbarium: existing themes cover editorial reference, terminal,
-newsroom, zine, arcade, illuminated, blueprint, mythic/tarot,
-vaporwave, receipt, board game, subway, spreadsheet, scrapbook,
-comic, and maritime chart. Pressed-leaf natural-history is a
-distinct visual register that doesn't overlap.
+`AetherDataStore.cacheSize` getter now reads `void this.cacheTick;`
+before returning `sweepCache.size`. The Map is annotated `false` in
+`makeAutoObservable` (intentionally — deep-tracking ~1.7 M tuple
+entries would be a disaster), so the existing `cacheTick` counter is
+the only signal MobX can react to. Without this dep, the live
+"Records" stat froze at 0 — caught during browser smoke-testing,
+fixed, re-verified.
 
-Implementation choices:
+### Æther style overlay
 
-- Layout: `sidebar` (no new layout).
-- Glyph: `tile` (no new variant).
-- Equation: `rendered` (no new variant).
-- Fonts: reuse `IM Fell English` + `Cinzel` + `JetBrains Mono` — all
-  already loaded by `index.html`. No new Google Fonts URL needed.
-- Palette: cream paper (`#F5EFDF`), forest ink (`#1F2A1A`), sage
-  accent (`#4F6B3A`), specimen-tag vermilion accent (`#A14B3A`).
-- Body treatment: faint hairline grid (graph-paper feel) +
-  bottom-right "Pl. XVII / Ed. 17" specimen-tag.
+- `App.tsx` mirrors `secret.aetherActive` onto `<html data-aether="1">`
+  via `useEffect` (cleared on revert and on unmount).
+- `web/src/styles/globals.css` gained a `[data-aether="1"]` block:
+  - Shifts `--accent-*` to cosmic violet (`#5e3aa6` / `#8c6bd4`).
+    Paper / ink / oxblood untouched, so every theme keeps identity.
+  - Faint indigo radial vignette + 96 px hairline grid on `body`
+    (starfield + graph paper).
+  - Soft violet halo + "Æ" watermark in the top-right of
+    `.page-surface`.
+  - Violet text-shadow on the active `SecretBadge` (`✦`).
 
-Theme kit refresh:
-
-- Update `docs/themes.md` layout/glyph counts (still accurate at 12 /
-  13) and add a checklist row for the Herbarium addition.
-- Add a "ship test" reminder pointing at the new theme-registry
-  consistency test in P7.1, so future editions get caught by CI if
-  they forget the bootstrap allow-list or colophon.
-
-### P7.3 — Accessibility + responsive audit
-
-Strictly additive CSS work appended to `web/src/styles/globals.css`,
-plus a minimal set of `aria-label` / `role` additions to stable
-components. Avoids touching layout components or restructuring
-markup so it doesn't conflict with an in-flight refactor.
-
-Scope:
-
-- A global `:focus-visible` block that gives every interactive
-  element a visible oxblood ring with offset, regardless of edition.
-  Currently focus styles vary per theme and a few editions (Phosphor
-  on dark, Tarot, Comic) have weak or invisible defaults.
-- Contrast patches: bump the `--ink-100` floor in dark editions
-  (Phosphor, Arcade) so secondary labels meet 4.5:1 against the
-  paper surface; raise muted-link contrast in Tarot and Comic.
-- Responsive overrides for very narrow viewports (`<400px`):
-  collapse the Compose board grid to a single column without
-  squeezing the dice glyphs, tighten the Lookup `DiceStepper` so
-  three steppers fit on a 320px-wide screen, ensure `min-height` on
-  every `<button>` reaches 32px (touch-target floor).
-- Minimal `aria-label` and `role="status"` additions on a small set
-  of stable elements (favorite toggle, share button, print button,
-  loading placeholders) — only where currently missing.
-
-Out of scope: any restructuring of `PageShell`, layouts, or
-top-level routing. A skip-link would be ideal but requires touching
-the page shell which is the most likely refactor target.
+Purely additive — leaving Æther mode removes the attribute and every
+selector falls away cleanly.
 
 ## Verification
 
-- `npm run typecheck` (root + web) — clean.
-- `npm run build` (web) — clean, bundle delta tracked in changelog.
-- `npm test` (root) — 151/151.
-- `npm run test:web` (new) — all green.
-- Manual cycle through Lookup / Explore / Compare / Visualize /
-  Compose / Gallery / Colophon in Herbarium — heatmap palette,
-  glyph, equation render correctly.
-- `roadmap.md` and `changelog.md` updated.
+- `npm --workspace web run typecheck` — clean.
+- `npm --workspace web run test` — 43/43 passing.
+- `npm --workspace web run build` — production bundle compiles clean.
+- Browser smoke: Konami unlocked, sidebar shows
+  `1,711,314 / live / 1-5000 / 2026-04-18`. Drove an arity-4 sweep on
+  `[2,3,5,7]`, then an arity-5 sweep on `[2,3,5,7,11]`, watched
+  Records tick 1 → 2 in real time. Violet accents visible on
+  tabs / labels / target value / chosen bar in the adjacent strip /
+  the "Five thousand" italic in the H1 / footer `✦`. Page-surface
+  halo and Æ watermark present.
+
+## Notes / technical debt
+
+- The Æther universe count (1,711,314) is the *theoretical* upper
+  bound for arities 3–5 across the full `ADV_DICE_RANGE`. The actual
+  on-demand sweep universe is far larger if you allow operator
+  permutations, but for the "how many tuples are addressable" framing
+  the multiset count is the right answer.
+- "Records" in Æther mode is a live count of *completed sweeps*, not
+  an estimate of total writeable cells. This makes the number honest
+  (it really is what the user has computed so far) at the cost of
+  starting at 0 each session. Considered showing
+  `cacheSize × ADV_TARGET_RANGE.length` for a "cells computed" framing
+  but it would obscure the cache-vs-fresh distinction.
+- Sweep cancellation still not implemented (carried forward from the
+  Phase 2 task). A revoked sweep still runs to completion and lands
+  in the cache — which now shows up as a Records bump even though the
+  user navigated away. Acceptable for now.

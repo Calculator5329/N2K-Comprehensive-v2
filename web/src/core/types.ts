@@ -64,6 +64,19 @@ export interface TargetStatsEntry {
   readonly solverCount: number;
 }
 
+/**
+ * Flat (dice -> [difficulty | null]) view of the dataset. Each row is a
+ * dense array of length `totalMax - totalMin + 1`; `null` marks targets
+ * with no equation. Bundled as `data/difficulty.json` and consumed by
+ * the Compose feature, which only needs `(dice, target) -> difficulty`
+ * and never the equation strings carried by the per-dice chunks.
+ */
+export interface DifficultyMatrix {
+  readonly totalMin: number;
+  readonly totalMax: number;
+  readonly dice: Readonly<Record<string, ReadonlyArray<number | null>>>;
+}
+
 /** Async loadable wrapper used by stores to expose loading state. */
 export type Loadable<T> =
   | { readonly status: "idle" }

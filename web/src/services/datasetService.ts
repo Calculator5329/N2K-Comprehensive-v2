@@ -3,6 +3,7 @@ import type {
   DatasetIndex,
   DiceDetail,
   DiceTriple,
+  DifficultyMatrix,
   TargetStatsEntry,
 } from "../core/types";
 
@@ -29,13 +30,37 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+/**
+ * Wrap `fetchJson` with bounded retries for transient transport failures.
+ * Browsers surface socket exhaustion / network blips as a bare
+ * `TypeError: Failed to fetch` (no HTTP status). When the Compose
+ * "Extensive" pool kicks off ~1,540 parallel fetches the connection pool
+ * occasionally drops one — retrying with a short backoff is enough to
+ * recover. HTTP error responses (404 etc.) are NOT retried because they
+ * indicate a real missing chunk, not a transport blip.
+ */
+async function fetchJsonWithRetry<T>(url: string, attempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await fetchJson<T>(url);
+    } catch (err) {
+      lastError = err;
+      if (!(err instanceof TypeError)) throw err;
+      if (i === attempts - 1) break;
+      await new Promise((r) => setTimeout(r, 100 * 2 ** i));
+    }
+  }
+  throw lastError;
+}
+
 export const datasetService = {
   loadIndex(): Promise<DatasetIndex> {
     return fetchJson<DatasetIndex>(`${BASE_PATH}/index.json`);
   },
 
   loadDice(dice: DiceTriple): Promise<DiceDetail> {
-    return fetchJson<DiceDetail>(`${BASE_PATH}/dice/${diceKey(dice)}.json`);
+    return fetchJsonWithRetry<DiceDetail>(`${BASE_PATH}/dice/${diceKey(dice)}.json`);
   },
 
   loadByTarget(): Promise<Readonly<Record<string, ByTargetEntry | null>>> {
@@ -44,5 +69,14 @@ export const datasetService = {
 
   loadTargetStats(): Promise<Readonly<Record<string, TargetStatsEntry>>> {
     return fetchJson(`${BASE_PATH}/target-stats.json`);
+  },
+
+  /**
+   * Single-fetch equation-stripped difficulty matrix. Used by Compose to
+   * resolve `(dice, target) -> difficulty` for a whole candidate pool
+   * without 1,500 lazy chunk requests.
+   */
+  loadDifficultyMatrix(): Promise<DifficultyMatrix> {
+    return fetchJson<DifficultyMatrix>(`${BASE_PATH}/difficulty.json`);
   },
 };

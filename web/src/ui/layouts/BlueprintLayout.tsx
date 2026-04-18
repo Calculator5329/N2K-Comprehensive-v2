@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { observer } from "mobx-react-lite";
 import { useStore } from "../../stores/storeContext";
+import { useAlmanacIndex } from "../../stores/useAlmanacIndex";
 import { ThemeSelector } from "../ThemeSelector";
 import { useNavItems, FOOTER_COLOPHON, type NavItem as NavItemT } from "../nav";
 import { THEMES } from "../../core/themes";
@@ -32,7 +33,7 @@ export const BlueprintLayout = observer(function BlueprintLayout({
   children: ReactNode;
 }) {
   const store = useStore();
-  const index = store.data.index;
+  const index = useAlmanacIndex();
   const themeId = store.theme.theme;
   const themeMeta = THEMES[themeId];
 
@@ -86,7 +87,7 @@ export const BlueprintLayout = observer(function BlueprintLayout({
 
 const TitleBlock = observer(function TitleBlock() {
   const store = useStore();
-  const index = store.data.index;
+  const index = useAlmanacIndex();
   const themeId = store.theme.theme;
   const themeMeta = THEMES[themeId];
   const navItems = useNavItems();

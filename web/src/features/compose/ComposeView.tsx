@@ -12,6 +12,13 @@ import {
   CANDIDATE_POOLS,
   type CandidatePoolId,
 } from "../../services/candidatePools";
+import {
+  downloadBlob,
+  exportToDocx,
+  exportToPdf,
+  type CompositionExportData,
+  type ExportBoard,
+} from "../../services/competitionExport";
 import { BoardEditor } from "./BoardEditor";
 import { CompetitionResults } from "./CompetitionResults";
 
@@ -36,22 +43,27 @@ export const ComposeView = observer(function ComposeView() {
 
   return (
     <article>
-      <PageHeader
-        folio="V"
-        eyebrow="Compose"
-        title={
-          <>
-            Boards, dice,{" "}
-            <span
-              className="italic text-oxblood-500"
-              style={{ fontVariationSettings: '"opsz" 144, "SOFT" 80, "WONK" 1' }}
-            >
-              and balance.
-            </span>
-          </>
-        }
-        dek="Build custom 6×6 boards and let the almanac roll a balanced pair of dice for each round of a two-player competition. Expected score is the primary balancing target; board difficulty stays as an easier-board guardrail."
-      />
+      {/* PageHeader is editorial chrome; it makes a great first screen but a
+          wasteful first page on paper. Tag it `no-print` so the printed
+          deliverable starts with the first board sheet. */}
+      <div className="no-print">
+        <PageHeader
+          folio="V"
+          eyebrow="Compose"
+          title={
+            <>
+              Boards, dice,{" "}
+              <span
+                className="italic text-oxblood-500"
+                style={{ fontVariationSettings: '"opsz" 144, "SOFT" 80, "WONK" 1' }}
+              >
+                and balance.
+              </span>
+            </>
+          }
+          dek="Build custom 6×6 boards and let the almanac roll a balanced pair of dice for each round of a two-player competition. Expected score is the primary balancing target; board difficulty stays as an easier-board guardrail."
+        />
+      </div>
 
       <AetherNotice />
 
@@ -229,7 +241,6 @@ const Toolbar = observer(function Toolbar({
   store: CompositionStore;
 }) {
   const disabled = store.generating || store.boards.length === 0;
-  const loadPct = Math.round(store.loadProgress * 100);
 
   return (
     <section className="flex flex-wrap items-center gap-4 border-t border-ink-100/15 pt-5">
@@ -249,8 +260,12 @@ const Toolbar = observer(function Toolbar({
       </button>
 
       {store.generating && store.loadProgress < 1 && (
-        <span className="text-[12px] font-mono text-ink-200">
-          loading dice chunks · {loadPct}%
+        <span
+          className="text-[12px] font-mono text-ink-200"
+          role="status"
+          aria-live="polite"
+        >
+          loading difficulty matrix…
         </span>
       )}
       {store.globalError && (
@@ -262,6 +277,8 @@ const Toolbar = observer(function Toolbar({
       {!store.generating && store.boards.some((b) => b.result !== null) && (
         <>
           <ExportButton store={store} />
+          <ExportPdfButton store={store} />
+          <ExportWordButton store={store} />
           <PrintButton />
         </>
       )}
@@ -326,6 +343,141 @@ function PrintButton() {
     >
       ⎙ Print boards
     </button>
+  );
+}
+
+/**
+ * Project the live MobX store onto the plain `CompositionExportData`
+ * envelope the export service consumes. Skips boards that haven't been
+ * generated — the toolbar already gates this on `boards.some(b =>
+ * b.result !== null)`, but the helper guards anyway so future callers
+ * can rely on it.
+ */
+function buildExportPayload(store: CompositionStore): CompositionExportData {
+  const boards: ExportBoard[] = store.boards
+    .map((board, i): ExportBoard | null => {
+      if (board.result === null) return null;
+      const result = board.result;
+      const cells = (board.preview ?? Array.from({ length: 36 }).map(() => 0)).map(
+        (v) => (v === 0 ? null : v),
+      );
+      return {
+        index: i + 1,
+        title:
+          board.kind === "random"
+            ? `Random ${board.rangeMin}–${board.rangeMax}`
+            : `Pattern [${board.multiples.join(", ")}] start ${board.patternStart}`,
+        rounds: board.rounds,
+        cells,
+        overrideSlots: [...board.overrides.keys()],
+        rolls: result.rounds.map((r, j) => ({
+          index: j + 1,
+          p1: [r.p1[0], r.p1[1], r.p1[2]] as const,
+          p2: [r.p2[0], r.p2[1], r.p2[2]] as const,
+          p1Difficulty: r.p1Difficulty,
+          p2Difficulty: r.p2Difficulty,
+          p1ExpectedScore: r.p1ExpectedScore,
+          p2ExpectedScore: r.p2ExpectedScore,
+        })),
+        totals: {
+          p1Difficulty: result.p1TotalDifficulty,
+          p2Difficulty: result.p2TotalDifficulty,
+          difficultyDelta: result.difficultyDelta,
+          p1ExpectedScore: result.p1TotalExpectedScore,
+          p2ExpectedScore: result.p2TotalExpectedScore,
+          expectedScoreDelta: result.expectedScoreDelta,
+        },
+      };
+    })
+    .filter((b): b is ExportBoard => b !== null);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    candidatePool: store.candidatePool,
+    timeBudget: store.timeBudget,
+    seed: store.seed,
+    boards,
+  };
+}
+
+/**
+ * Generic "export → file" button. Both the PDF and Word buttons share
+ * the same shape: build the payload, hand it to a generator, surface
+ * the result via `idle / working / failed` flash. Errors are surfaced
+ * inline rather than swallowed so a user can see why nothing
+ * downloaded — generators can throw on extreme inputs (a board
+ * matrix of zero cells, etc.) even though the toolbar gating prevents
+ * the obvious cases.
+ */
+const ExportFileButton = observer(function ExportFileButton({
+  store,
+  label,
+  ariaLabel,
+  filename,
+  build,
+}: {
+  store: CompositionStore;
+  label: string;
+  ariaLabel: string;
+  filename: (data: CompositionExportData) => string;
+  build: (data: CompositionExportData) => Promise<Blob>;
+}) {
+  const [status, setStatus] = useState<"idle" | "working" | "failed">("idle");
+
+  async function handleClick() {
+    if (status === "working") return;
+    setStatus("working");
+    try {
+      const data = buildExportPayload(store);
+      const blob = await build(data);
+      downloadBlob(blob, filename(data));
+      setStatus("idle");
+    } catch (err) {
+      console.error("[compose] export failed:", err);
+      setStatus("failed");
+      window.setTimeout(() => setStatus("idle"), 2400);
+    }
+  }
+
+  const visibleLabel =
+    status === "working" ? "Working…" : status === "failed" ? "Failed" : label;
+
+  return (
+    <button
+      type="button"
+      onClick={() => void handleClick()}
+      className="px-3 py-1.5 text-[12px] font-mono uppercase tracking-wide-caps text-ink-300 border border-ink-100/40 hover:border-oxblood-500 hover:text-oxblood-500 transition-colors disabled:opacity-50"
+      style={{ borderRadius: "2px" }}
+      aria-label={ariaLabel}
+      aria-live="polite"
+      disabled={status === "working"}
+    >
+      {visibleLabel}
+    </button>
+  );
+});
+
+function ExportPdfButton({ store }: { store: CompositionStore }) {
+  return (
+    <ExportFileButton
+      store={store}
+      label="↓ Export PDF"
+      ariaLabel="Export competition as PDF"
+      filename={(data) => `n2k-competition-${data.generatedAt.slice(0, 10)}.pdf`}
+      build={(data) => exportToPdf(data)}
+    />
+  );
+}
+
+function ExportWordButton({ store }: { store: CompositionStore }) {
+  return (
+    <ExportFileButton
+      store={store}
+      label="↓ Export Word"
+      ariaLabel="Export competition as Word document"
+      filename={(data) => `n2k-competition-${data.generatedAt.slice(0, 10)}.docx`}
+      build={(data) => exportToDocx(data)}
+    />
   );
 }
 

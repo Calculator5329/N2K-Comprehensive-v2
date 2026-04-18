@@ -1,4 +1,4 @@
-import { BOARD } from "../core/constants.js";
+import { BOARD, isLegalDiceTriple } from "../core/constants.js";
 import type { DiceTriple } from "../core/types.js";
 
 /** Inclusive integer in [min, max]. */
@@ -109,8 +109,9 @@ export function generatePatternBoard(
 
 /**
  * Roll three dice. The first two are constrained to `[minDice, maxDice]`,
- * the third to `[minDice, lastMaxDice]`, and the same value cannot appear on
- * all three dice.
+ * the third to `[minDice, lastMaxDice]`. Re-rolls until the result is a
+ * legal N2K roll (see {@link isLegalDiceTriple}): no all-same triples and
+ * no rolls with two or more `1`s.
  */
 export function generateRandomDice(
   options: { minDice?: number; maxDice?: number; lastMaxDice?: number } = {},
@@ -125,7 +126,7 @@ export function generateRandomDice(
   ];
 
   let dice = roll();
-  while (dice[0] === dice[1] && dice[1] === dice[2]) {
+  while (!isLegalDiceTriple(dice)) {
     dice = roll();
   }
   return dice;

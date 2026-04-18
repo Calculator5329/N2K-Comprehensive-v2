@@ -77,7 +77,33 @@ A larger, slower variant of the solver gated behind a Konami unlock.
 - [x] **Web Konami unlock** — `SecretStore`, ↑↑↓↓←→←→ba detector
 - [x] **Web Æther view** — arity picker, dice steppers, target input,
       worker-pool advanced solver, lazy code-split bundle
+      *(retired in the all-tabs Æther integration — see below)*
 - [x] **Footer ✦ glyph** — visible indicator while unlocked
+- [x] **All-tabs Æther integration** — Æther mode is now a global UI
+      state (`SecretStore.mode`) that swaps every primary view
+      (Lookup / Explore / Compare / Visualize / Compose) for an
+      Æther-aware variant on activation. The standalone Æther tab
+      retired; the nav badge ✦/✧ is the toggle.
+  - [x] **Per-tuple sweep worker** (`aetherSolverWorker.ts`,
+        `aetherSolverService.sweepAdvanced`) — single-pass solve over
+        every target in `[1, 5,000]` for a fixed-arity tuple.
+  - [x] **`AetherDataStore`** — lazy per-tuple sweep cache + summary
+        derivation, dedupes concurrent requests.
+  - [x] **`AetherLookupView`** — arity picker, wider dice/target
+        ranges, worker-backed solutions + neighborhood strip.
+  - [x] **`AetherExploreView`** — paginated table over the canonical
+        1,000-tuple sample, search box for ad-hoc tuples, sortable
+        columns, click-to-detail panel.
+  - [x] **`AetherCompareView`** — up-to-four tuples of any arity,
+        same chart projections as the standard view, live worker
+        sweeps with deduped cache.
+  - [x] **`AetherVisualizeView`** — single-tuple difficulty band +
+        opt-in sampled atlas with progress bar.
+  - [x] **`Compose` Æther sample pool** — `aetherSample` candidate
+        pool option + Æther-mode banner explaining the dataset
+        constraint.
+  - [x] **Mode toggle** — `SecretBadge` is now a button: ✧ unlocked
+        but inactive, ✦ active. Click to flip.
 - [ ] **Web Lookup pane backed by `.n2k` files** — chunk loader,
       coverage index, in-bundle lazy fetching (deferred until a real
       dataset is exported and we know the size budget)
@@ -86,6 +112,8 @@ A larger, slower variant of the solver gated behind a Konami unlock.
 
 - [x] Compare view chart projections (per-target / avg-per-100 /
       solvable-per-100 / cumulative) + median + difficulty-mix bar
+- [x] Compose: single-fetch difficulty matrix (`data/difficulty.json`)
+      so the Extensive pool no longer fans out ~1,500 chunk requests
 - [ ] Persist Konami-unlock in `localStorage` so reload keeps Æther on
 - [ ] URL-hash sync for Æther view (so Æther links can be shared)
 - [ ] Footer ✦ glyph in every layout (currently Sidebar only)

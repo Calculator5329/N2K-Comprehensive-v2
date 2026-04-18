@@ -27,6 +27,23 @@ export interface AdvancedSolverOptions {
   readonly safeMagnitude?: number;
 }
 
+/**
+ * Per-permutation progress notification. Fired once after each
+ * permutation finishes enumerating. `best` is the running best-so-far
+ * map (target → cheapest equation found yet); it MUST NOT be retained
+ * past the callback because the solver continues to mutate it.
+ *
+ * Wire this from the worker to stream a partial result to the UI so
+ * arity-5 sweeps (which take 1–3 minutes) can render an answer within
+ * the first few hundred milliseconds and tighten as the sweep
+ * progresses.
+ */
+export interface AdvancedSweepProgress {
+  readonly permsDone: number;
+  readonly permsTotal: number;
+  readonly best: ReadonlyMap<number, AdvBulkSolution>;
+}
+
 export interface AdvancedSolverInput {
   readonly dice: readonly number[];
   readonly total: number;
@@ -159,6 +176,7 @@ export function solveAdvancedForAllTargets(
   minTotal: number,
   maxTotal: number,
   options: AdvancedSolverOptions = {},
+  onPermComplete?: (progress: AdvancedSweepProgress) => void,
 ): Map<number, AdvBulkSolution> {
   if (dice.length < 3 || dice.length > 5) {
     throw new RangeError(
@@ -172,7 +190,18 @@ export function solveAdvancedForAllTargets(
   const opTuples = allOpTuples(dice.length - 1);
   const best = new Map<number, AdvBulkSolution>();
 
-  for (const perm of distinctPermutations(dice)) {
+  // Materialize the permutation list up front so we can report
+  // (permsDone / permsTotal) progress. The list maxes out at 5! = 120
+  // entries even with all-distinct arity-5 input, so the extra
+  // allocation is negligible compared to the per-perm enumeration cost.
+  const perms = onPermComplete === undefined
+    ? null
+    : [...distinctPermutations(dice)];
+  const iter = perms ?? distinctPermutations(dice);
+  const permsTotal = perms?.length ?? 0;
+  let permsDone = 0;
+
+  for (const perm of iter) {
     enumerateForPermutation(
       perm,
       basesCache,
@@ -183,6 +212,10 @@ export function solveAdvancedForAllTargets(
       allBases,
       best,
     );
+    if (onPermComplete !== undefined) {
+      permsDone += 1;
+      onPermComplete({ permsDone, permsTotal, best });
+    }
   }
 
   return best;

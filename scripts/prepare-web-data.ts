@@ -4,10 +4,17 @@
  *
  *   index.json                         { meta, dice: [...summary rows] }
  *   by-target.json                     { [total]: { dice, difficulty, equation } | null }
+ *   target-stats.json                  { [total]: { easiest, hardest, solverCount } }
+ *   difficulty.json                    { totalMin, totalMax, dice: { "a-b-c": [d|null × N] } }
  *   dice/{a}-{b}-{c}.json              { dice, solutions: { [total]: { difficulty, equation } } }
  *
  * The split keeps initial page load tiny (~150 KB) while letting users drill
  * into any dice triple with a single ~5 KB lazy fetch.
+ *
+ * `difficulty.json` is the equation-stripped flat view used by the Compose
+ * feature: one fetch instead of 1,501 (`Extensive` pool), since the
+ * competition generator only needs `(dice, target) -> difficulty` and never
+ * touches equation strings. Roughly 7 MB raw / 880 KB gzip / 540 KB brotli.
  *
  *   tsx scripts/prepare-web-data.ts \
  *       [inputNdjson=./data-raw/n2k-export.ndjson] \
@@ -213,6 +220,33 @@ for (let t = manifest.totalMin; t <= manifest.totalMax; t += 1) {
 await writeFile(
   `${outputDir}/target-stats.json`,
   JSON.stringify(targetStatsPayload),
+  "utf8",
+);
+
+// Write difficulty.json (compact (dice -> [difficulty | null] × N) matrix).
+//
+// Compose's expected-score heuristic only needs difficulty per (dice, target)
+// — never the equation string. Bundling those into one file lets the web
+// app prefetch the entire candidate-pool with a single HTTP request rather
+// than ~1,500 lazy chunks. See `web/src/services/difficultyMatrixService.ts`.
+console.log(`> Writing difficulty.json`);
+const totalMin = manifest.totalMin;
+const totalMax = manifest.totalMax;
+const span = totalMax - totalMin + 1;
+const diceMatrix: Record<string, (number | null)[]> = Object.create(null);
+for (const summary of manifest.perDice) {
+  const key = summary.dice.join("-");
+  const records = grouped.get(key) ?? [];
+  const row: (number | null)[] = new Array(span).fill(null);
+  for (const r of records) {
+    const idx = r.total - totalMin;
+    if (idx >= 0 && idx < span) row[idx] = r.difficulty;
+  }
+  diceMatrix[key] = row;
+}
+await writeFile(
+  `${outputDir}/difficulty.json`,
+  JSON.stringify({ totalMin, totalMax, dice: diceMatrix }),
   "utf8",
 );
 

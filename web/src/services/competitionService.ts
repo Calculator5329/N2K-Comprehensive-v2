@@ -1,11 +1,17 @@
 /**
  * Glue layer between the pure `@solver/services/competition` algorithms and
- * the web app's static dataset (per-dice JSON chunks served from
- * `/data/dice/{a-b-c}.json`).
+ * the web app's bundled difficulty matrix (`/data/difficulty.json`).
  *
  * Two responsibilities:
- *   1. Make sure every candidate dice chunk is loaded before generation.
- *   2. Adapt `DataStore.diceState` into a synchronous `DifficultyResolver`.
+ *   1. Make sure the (single) difficulty matrix is loaded before generation.
+ *   2. Adapt `DataStore.difficultyMatrix` into a synchronous
+ *      `DifficultyResolver`.
+ *
+ * Compose only ever needs `(dice, target) -> difficulty`; equation strings
+ * stay in the per-dice JSON chunks served to the Lookup view. Loading the
+ * matrix is one HTTP request (~880 KB gzip / 540 KB brotli) regardless of
+ * pool size, replacing the previous chunk-fan-out which fired ~1,500
+ * requests for the "Extensive" pool.
  */
 import type { DiceTriple } from "../core/types";
 import { DataStore } from "../stores/DataStore";
@@ -16,76 +22,46 @@ function diceKey(dice: DiceTriple): string {
 }
 
 /**
- * Build a synchronous resolver backed by `dataStore`'s in-memory cache.
+ * Build a synchronous resolver backed by the loaded difficulty matrix.
  *
- * Returns `null` for any (dice, target) where the dice chunk hasn't been
- * loaded yet OR the target is absent (== unsolvable). Callers should
- * `await ensureCandidatesLoaded(...)` before generating.
+ * Returns `null` for any (dice, target) absent from the matrix (== outside
+ * the bundled dataset OR unsolvable). Callers must `await
+ * ensureDifficultyMatrixLoaded(dataStore)` first; if the matrix isn't
+ * ready the resolver falls back to `null` for every cell.
  */
 export function makeDataStoreResolver(dataStore: DataStore): DifficultyResolver {
   return (dice, target) => {
-    const state = dataStore.diceState(dice);
+    const state = dataStore.difficultyMatrix;
     if (state.status !== "ready") return null;
-    const sol = state.value.solutions[String(target)];
-    if (sol === undefined) return null;
-    return sol.difficulty;
+    const row = state.value.dice[diceKey(dice)];
+    if (row === undefined) return null;
+    const idx = target - state.value.totalMin;
+    if (idx < 0 || idx >= row.length) return null;
+    return row[idx] ?? null;
   };
 }
 
 /**
- * Ensure every dice chunk in `candidates` is present in the data store.
- * Resolves once they're all loaded (or rejects on the first network error).
+ * Ensure the bundled difficulty matrix is in memory. Resolves once it is,
+ * or rejects with the load error.
  *
- * `dataStore.ensureDice` already dedupes concurrent fetches and caches the
- * result; we just trigger it for every candidate then poll until everything
- * settles. Concurrency is bounded by browser-level fetch limits, not us.
+ * `onProgress` fires twice — `(0, 1)` immediately and `(1, 1)` on
+ * resolution. The matrix is a single JSON fetch served gzip/brotli, so
+ * fine-grained progress would require a streaming JSON parser; the
+ * coarse signal is enough to keep the existing UI affordances working.
  */
-export async function ensureCandidatesLoaded(
+export async function ensureDifficultyMatrixLoaded(
   dataStore: DataStore,
-  candidates: readonly DiceTriple[],
   options: { onProgress?: (loaded: number, total: number) => void } = {},
 ): Promise<void> {
-  const total = candidates.length;
-  for (const dice of candidates) {
-    dataStore.ensureDice(dice);
+  options.onProgress?.(0, 1);
+  await dataStore.loadDifficultyMatrix();
+  const state = dataStore.difficultyMatrix;
+  if (state.status === "error") {
+    throw new Error(`Failed to load difficulty matrix: ${state.error}`);
   }
-  options.onProgress?.(countReady(dataStore, candidates), total);
-
-  const TIMEOUT_MS = 60_000;
-  const start = Date.now();
-  while (true) {
-    let allReady = true;
-    for (const dice of candidates) {
-      const state = dataStore.diceState(dice);
-      if (state.status === "error") {
-        throw new Error(
-          `Dice ${diceKey(dice)} failed to load: ${state.error}`,
-        );
-      }
-      if (state.status !== "ready") {
-        allReady = false;
-        break;
-      }
-    }
-    if (allReady) {
-      options.onProgress?.(total, total);
-      return;
-    }
-    if (Date.now() - start > TIMEOUT_MS) {
-      throw new Error("Timed out waiting for dice chunks to load");
-    }
-    await new Promise((r) => setTimeout(r, 30));
-    options.onProgress?.(countReady(dataStore, candidates), total);
+  if (state.status !== "ready") {
+    throw new Error("Difficulty matrix did not reach ready state");
   }
-}
-
-function countReady(
-  dataStore: DataStore,
-  candidates: readonly DiceTriple[],
-): number {
-  let n = 0;
-  for (const dice of candidates) {
-    if (dataStore.diceState(dice).status === "ready") n += 1;
-  }
-  return n;
+  options.onProgress?.(1, 1);
 }

@@ -2291,6 +2291,15 @@
  * Page boundaries: per-board surfaces use `break-inside: avoid` plus
  * `break-after: page` so a 4-board competition prints as four pages.
  * ========================================================================= */
+
+/* `.print-only` defaults to hidden on screen; the `@media print` block
+   below reveals it. Keep this OUTSIDE the print media query — the
+   screen-side suppression is what keeps the print-only stats sheet
+   from bleeding into the interactive view. */
+.print-only {
+  display: none;
+}
+
 @media print {
   /* Force a neutral, page-shaped color world regardless of the active
      edition. Themes paint backgrounds, gradient grids, drop shadows —
@@ -2410,6 +2419,171 @@
   .compose-board-sheet * {
     transition: none !important;
     animation: none !important;
+  }
+
+  /* The blanket `.grid { display: block }` reset above flattens every
+     CSS grid on the page so the 12-col page scaffolding collapses
+     cleanly. The 6×6 board itself is the one place we *must* keep
+     the grid alive — otherwise every cell stacks vertically into a
+     single column and the printed sheet shows a long ribbon of
+     numbers instead of a board. */
+  .compose-board-grid {
+    display: grid !important;
+  }
+
+  /* --- Compose: per-board sheet = "board grid + dice rolls" only --------
+   *
+   * Each `.compose-board-sheet` prints as a single page containing the
+   * 6×6 board and the round-by-round dice picks. Difficulty meters,
+   * expected-score columns, and the per-board totals strip are
+   * suppressed here and re-collected onto a single trailing stats
+   * page (see the `.compose-stats-sheet` block below) so the
+   * referee carries one stats sheet next to the stack of boards.
+   */
+
+  /* Hide the diff/exp columns + totals strip on each board sheet. */
+  .compose-board-sheet .compose-stats-col {
+    display: none !important;
+  }
+
+  /* Reset margins so the sheet starts at the top of the page. */
+  .compose-board-sheet {
+    margin: 0 !important;
+  }
+
+  /* Header row ("Board N · Random 1–200 · 4 rounds"). */
+  .compose-board-sheet .font-display {
+    font-size: 16pt !important;
+  }
+
+  /* 6×6 board cells: bigger numerals than the on-screen `h-12` cells
+     would compress to. The user explicitly asked for larger board
+     numbers — 14pt with generous padding gives a real "game-board"
+     read on paper. */
+  .compose-board-grid > div {
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 8pt 0 !important;
+    font-size: 14pt !important;
+    font-weight: 600 !important;
+  }
+
+  /* Rounds table: only `# / P1 dice / P2 dice` left after the
+     diff/exp columns are hidden — give them more breathing room. */
+  .compose-board-sheet table {
+    font-size: 11pt !important;
+  }
+  .compose-board-sheet table th,
+  .compose-board-sheet table td {
+    padding-top: 4pt !important;
+    padding-bottom: 4pt !important;
+  }
+
+  /* --- Compose: trailing stats summary sheet --------------------------- */
+  .compose-stats-sheet {
+    break-before: page;
+    page-break-before: always;
+    color: #000;
+    font-family: var(--font-body);
+  }
+  .compose-stats-sheet__title {
+    font-family: var(--font-display);
+    font-size: 18pt;
+    margin: 0 0 4pt 0;
+    color: #000 !important;
+  }
+  .compose-stats-sheet__caption {
+    font-size: 9pt;
+    color: #444 !important;
+    margin: 0 0 14pt 0;
+    max-width: 5in;
+    line-height: 1.35;
+  }
+  .compose-stats-sheet__boards {
+    display: block !important;
+  }
+  .compose-stats-sheet__board {
+    margin-bottom: 16pt;
+    break-inside: avoid;
+  }
+  .compose-stats-sheet__board-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10pt;
+    margin-bottom: 4pt;
+    border-bottom: 1pt solid #000;
+    padding-bottom: 2pt;
+  }
+  .compose-stats-sheet__board-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #444;
+  }
+  .compose-stats-sheet__board-title {
+    font-family: var(--font-display);
+    font-size: 13pt;
+    color: #000;
+  }
+  .compose-stats-sheet__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-mono);
+    font-size: 9.5pt;
+  }
+  .compose-stats-sheet__table th,
+  .compose-stats-sheet__table td {
+    padding: 3pt 6pt;
+    text-align: left;
+    border-bottom: 0.5pt solid #999;
+  }
+  .compose-stats-sheet__table th {
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #444;
+    border-bottom: 0.75pt solid #000;
+  }
+  .compose-stats-sheet__totals-row td {
+    font-weight: 700;
+    border-top: 0.75pt solid #000;
+    border-bottom: none;
+    background: transparent !important;
+  }
+  .compose-stats-sheet__deltas {
+    margin-top: 4pt;
+    display: flex;
+    gap: 18pt;
+    font-size: 10pt;
+    font-family: var(--font-mono);
+  }
+  .compose-stats-sheet__deltas strong {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 8pt;
+    margin-right: 4pt;
+  }
+
+  /* --- BoardLayout chrome: strip everything but the inner card --------- */
+  /* The tabletop layout paints a navy frame, inset hairlines, corner
+     brackets, and a dashed registration ring — all decorative and
+     loud on paper. Strip the frame and let the inner play surface
+     print as a neutral white sheet. */
+  .board-layout-frame {
+    background: #fff !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+  .board-layout-card {
+    background: #fff !important;
+    border: none !important;
+    padding: 0 !important;
+  }
+  .board-layout-wrap {
+    padding: 0 !important;
+    max-width: none !important;
   }
 
   /* --- Lookup: clean single-triple sheet -------------------------------- */
@@ -2587,4 +2761,114 @@
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* =========================================================================
+ * Æther mode overlay
+ *
+ * `<html data-aether="1">` is set by `App.tsx` whenever
+ * `SecretStore.aetherActive` is true. The block below layers a small,
+ * theme-agnostic visual signature on top of whatever theme is active —
+ * not a separate edition (the user's theme choice is preserved) but a
+ * recognisable "this is Æther mode" stamp so the wider dice/target
+ * scope reads at a glance.
+ *
+ * Treatments (additive, low-contrast so they never fight the theme):
+ *   1. Accent shift toward a cosmic violet — overrides only the four
+ *      `--accent-*` slots; the support/ink/paper variables stay intact
+ *      so the editorial palette remains readable.
+ *   2. Body backdrop gains a faint indigo radial glow + a subtle
+ *      hairline grid (lower-opacity than the Blueprint theme's grid),
+ *      composited on top of the theme's existing background.
+ *   3. Page surface gains a soft violet shadow + a tiny "Æ" mark in
+ *      the top-right corner so every layout's body card reads as a
+ *      Æther page even with no other chrome changes.
+ *   4. The selection highlight inherits the violet to match the new
+ *      accent.
+ *
+ * Everything is applied with `!important` only where it has to win
+ * over a `[data-theme]` rule; otherwise plain cascade order is enough.
+ * ========================================================================= */
+[data-aether="1"] {
+  /* Cosmic violet — sits between the Tarot navy and the Vaporwave
+     magenta, distinct from every existing theme accent. */
+  --accent-400: 152 102 220;
+  --accent-500: 124  78 196;
+  --accent-600:  96  56 168;
+
+  --selection-bg: rgb(var(--accent-500));
+  --selection-fg: rgb(255 255 255);
+}
+
+/* Faint cosmic backdrop. Stacked so the theme's own body background
+   (set on `body` for some themes, on the wrapper for others) shows
+   through underneath. `background-attachment: fixed` keeps the glow
+   anchored when the page scrolls. */
+[data-aether="1"] body {
+  background-image:
+    radial-gradient(
+      circle at 12% -8%,
+      rgb(var(--accent-500) / 0.10) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      circle at 92% 110%,
+      rgb(var(--accent-500) / 0.08) 0%,
+      transparent 50%
+    ),
+    linear-gradient(
+      to right,
+      rgb(var(--ink-100) / 0.06) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      rgb(var(--ink-100) / 0.06) 1px,
+      transparent 1px
+    );
+  background-size: 100% 100%, 100% 100%, 96px 96px, 96px 96px;
+  background-attachment: fixed, fixed, fixed, fixed;
+  background-position: 0 0, 0 0, 0 0, 0 0;
+}
+
+/* Soft violet halo on every layout's body card. The
+   `--page-shadow` variable already controls each theme's drop shadow
+   on `.page-surface`; we layer on top instead of replacing so the
+   theme's own elevation cue is preserved. */
+[data-aether="1"] .page-surface {
+  position: relative;
+  box-shadow:
+    var(--page-shadow),
+    0 0 0 1px rgb(var(--accent-500) / 0.18),
+    0 24px 60px -28px rgb(var(--accent-500) / 0.30);
+}
+
+/* Tiny Æ watermark in the top-right of every page card. Pointer-events
+   off so it can never intercept clicks; opacity tuned to read on both
+   light and dark themes (mixed via the theme-derived `--accent-500`).
+   Dropped on narrow viewports — it would crowd the corner on phones. */
+[data-aether="1"] .page-surface::before {
+  content: "Æ";
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 1;
+  letter-spacing: 0;
+  color: rgb(var(--accent-500) / 0.55);
+  pointer-events: none;
+  user-select: none;
+}
+
+@media (max-width: 640px) {
+  [data-aether="1"] .page-surface::before {
+    display: none;
+  }
+}
+
+/* SecretBadge is a clickable mode toggle in the footer; in Æther mode
+   give it a soft halo so it reads as "lit" rather than just colored. */
+[data-aether="1"] [aria-pressed="true"][title*="Æther"] {
+  text-shadow: 0 0 6px rgb(var(--accent-500) / 0.55);
 }

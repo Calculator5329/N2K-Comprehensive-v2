@@ -9,6 +9,7 @@ import type {
 } from "../core/types";
 import {
   sweepAdvanced,
+  type AetherSweepProgressPayload,
   type AetherSweepResult,
 } from "../services/aetherSolverService";
 
@@ -31,6 +32,18 @@ export interface AetherTupleSweep {
   readonly cells: ReadonlyMap<number, AetherCell>;
   /** Solvable targets, ascending. Same data as `cells.keys()` but sorted. */
   readonly targetsSorted: readonly number[];
+}
+
+/**
+ * Streaming intermediate sweep — what the worker has found so far for a
+ * tuple whose final sweep is still running. Same shape as
+ * `AetherTupleSweep` plus permutation-progress metadata. The cells/
+ * targetsSorted entries are the running best-known answers; later
+ * permutations may replace individual entries with easier equations.
+ */
+export interface AetherTuplePartialSweep extends AetherTupleSweep {
+  readonly permsDone: number;
+  readonly permsTotal: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +120,17 @@ function inflate(
   };
 }
 
+function inflatePartial(
+  tuple: AetherTuple,
+  raw: AetherSweepProgressPayload,
+): AetherTuplePartialSweep {
+  return {
+    ...inflate(tuple, raw),
+    permsDone: raw.permsDone,
+    permsTotal: raw.permsTotal,
+  };
+}
+
 // ---------------------------------------------------------------------------
 //  Store
 // ---------------------------------------------------------------------------
@@ -135,6 +159,14 @@ function inflate(
 export class AetherDataStore {
   /** Per-tuple sweep cache, keyed by `tupleKey(tuple)`. */
   private readonly sweepCache = new Map<string, Loadable<AetherTupleSweep>>();
+  /**
+   * Streaming partial sweeps, keyed by `tupleKey(tuple)`. Populated by
+   * `sweep-progress` worker messages while a sweep is in flight, and
+   * cleared when the final `ready` value lands. The Lookup view reads
+   * this so it can render the running best equation within ~400 ms
+   * instead of waiting the full 1–3 minutes that arity-5 sweeps take.
+   */
+  private readonly partialCache = new Map<string, AetherTuplePartialSweep>();
   /** Lazily-computed summary cache, parallel to `sweepCache`. */
   private readonly summaryCache = new Map<string, AetherTupleSummary>();
   /** In-flight promise per tuple key, used to dedupe concurrent calls. */
@@ -143,8 +175,12 @@ export class AetherDataStore {
   cacheTick = 0;
 
   constructor() {
-    makeAutoObservable<this, "sweepCache" | "summaryCache" | "pending">(this, {
+    makeAutoObservable<
+      this,
+      "sweepCache" | "partialCache" | "summaryCache" | "pending"
+    >(this, {
       sweepCache: false,
+      partialCache: false,
       summaryCache: false,
       pending: false,
       ensureSweep: action,
@@ -157,6 +193,18 @@ export class AetherDataStore {
     // Read `cacheTick` so MobX wires up a dependency on the cache.
     void this.cacheTick;
     return this.sweepCache.get(tupleKey(tuple)) ?? { status: "idle" };
+  }
+
+  /**
+   * Streaming partial result for a tuple whose sweep is still running.
+   * Returns `null` if the sweep hasn't started, has already completed
+   * (use `sweepState` for the final value), or hasn't reported its first
+   * progress yet. Reading this wires up a MobX dep on `cacheTick` so
+   * components re-render as new partials arrive.
+   */
+  partialFor(tuple: AetherTuple): AetherTuplePartialSweep | null {
+    void this.cacheTick;
+    return this.partialCache.get(tupleKey(tuple)) ?? null;
   }
 
   /**
@@ -197,18 +245,25 @@ export class AetherDataStore {
       tuple,
       ADV_TARGET_RANGE.min,
       ADV_TARGET_RANGE.max,
+      (progress) =>
+        runInAction(() => {
+          this.partialCache.set(key, inflatePartial(tuple, progress));
+          this.cacheTick += 1;
+        }),
     ).then((raw) => inflate(tuple, raw));
 
     promise
       .then((value) =>
         runInAction(() => {
           this.sweepCache.set(key, { status: "ready", value });
+          this.partialCache.delete(key);
           this.cacheTick += 1;
         }),
       )
       .catch((err: unknown) =>
         runInAction(() => {
           this.sweepCache.set(key, { status: "error", error: String(err) });
+          this.partialCache.delete(key);
           this.cacheTick += 1;
         }),
       )
@@ -224,13 +279,24 @@ export class AetherDataStore {
   invalidate(tuple: AetherTuple): void {
     const key = tupleKey(tuple);
     this.sweepCache.delete(key);
+    this.partialCache.delete(key);
     this.summaryCache.delete(key);
     this.pending.delete(key);
     this.cacheTick += 1;
   }
 
-  /** Number of tuples currently cached (any state). Useful for diagnostics. */
+  /**
+   * Number of tuples currently cached (any state). Useful for
+   * diagnostics and as a "live records" indicator in the page-shell
+   * stats strip when Æther mode is active.
+   *
+   * Reads `cacheTick` so MobX wires the computed value's invalidation
+   * to the same tick that mutations bump — without it, the getter has
+   * no observable dependency and would never re-evaluate (the
+   * underlying Map is annotated `false` in `makeAutoObservable`).
+   */
   get cacheSize(): number {
+    void this.cacheTick;
     return this.sweepCache.size;
   }
 }
