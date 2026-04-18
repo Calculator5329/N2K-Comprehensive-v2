@@ -10,6 +10,7 @@ import type {
   DiceTriple,
   Loadable,
 } from "../../core/types";
+import { AetherCompareView } from "./AetherCompareView";
 
 /**
  * Up-to-four-triple overlay chart, built on top of `CompareStore`. The
@@ -921,6 +922,12 @@ const SelectedPanel = observer(function SelectedPanel({
 // ---------------------------------------------------------------------------
 
 export const CompareView = observer(function CompareView() {
+  const { secret } = useStore();
+  if (secret.aetherActive) return <AetherCompareView />;
+  return <StandardCompareView />;
+});
+
+const StandardCompareView = observer(function StandardCompareView() {
   const { compare, data } = useStore();
   const selected = compare.selected;
 

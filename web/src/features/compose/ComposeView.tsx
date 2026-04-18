@@ -7,7 +7,11 @@ import {
   TIME_BUDGET_PRESETS,
   type TimeBudgetPreset,
 } from "./CompositionStore";
-import { CANDIDATE_POOLS, type CandidatePoolId } from "../../services/candidatePools";
+import {
+  AETHER_CANDIDATE_POOLS,
+  CANDIDATE_POOLS,
+  type CandidatePoolId,
+} from "../../services/candidatePools";
 import { BoardEditor } from "./BoardEditor";
 import { CompetitionResults } from "./CompetitionResults";
 
@@ -49,6 +53,8 @@ export const ComposeView = observer(function ComposeView() {
         dek="Build custom 6×6 boards and let the almanac roll a balanced pair of dice for each round of a two-player competition. Expected score is the primary balancing target; board difficulty stays as an easier-board guardrail."
       />
 
+      <AetherNotice />
+
       <div className="space-y-10">
         <div className="no-print">
           <ConfigPanel store={compose} />
@@ -65,17 +71,36 @@ export const ComposeView = observer(function ComposeView() {
   );
 });
 
+const AetherNotice = observer(function AetherNotice() {
+  const { secret } = useStore();
+  if (!secret.aetherActive) return null;
+  return (
+    <aside
+      className="no-print mb-6 px-4 py-3 border border-oxblood-500/30 bg-oxblood-500/5 text-[12px] text-ink-200 font-mono"
+      style={{ borderRadius: "2px" }}
+    >
+      <strong className="text-oxblood-500 uppercase tracking-wide-caps mr-2">Æther note</strong>
+      Compose evaluates each candidate against the bundled 1..20 stats dataset, so wider Æther tuples (negatives, values &gt; 20) aren't valid here.
+      The new <em>Æther sample (3d)</em> pool restricts the search to the same triples used elsewhere in Æther tooling.
+    </aside>
+  );
+});
+
 const ConfigPanel = observer(function ConfigPanel({
   store,
 }: {
   store: CompositionStore;
 }) {
+  const { secret } = useStore();
+  const pools = secret.aetherActive
+    ? [...CANDIDATE_POOLS, ...AETHER_CANDIDATE_POOLS]
+    : CANDIDATE_POOLS;
   return (
     <section className="grid grid-cols-12 gap-y-6 md:gap-6 border-t border-b border-ink-100/15 py-6">
       <div className="col-span-12 md:col-span-4">
         <div className="label-caps mb-2">Candidate pool</div>
         <div className="space-y-1.5">
-          {CANDIDATE_POOLS.map((p) => (
+          {pools.map((p) => (
             <PoolOption
               key={p.id}
               id={p.id}

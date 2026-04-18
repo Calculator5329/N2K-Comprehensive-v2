@@ -8,6 +8,7 @@ import { DiceGlyph } from "../../ui/DiceGlyph";
 import { FavoriteToggle } from "../../ui/FavoriteToggle";
 import { PageHeader } from "../_shared/PageHeader";
 import { AllEquationsList } from "./AllEquationsList";
+import { AetherLookupView } from "./AetherLookupView";
 import { LookupStore } from "./LookupStore";
 
 type QuickAction =
@@ -272,7 +273,20 @@ function Skeleton() {
   );
 }
 
+/**
+ * Top-level Lookup view. Branches between standard and Æther variants
+ * based on the global mode flag (set by `SecretStore`). Both variants
+ * share the same page slot, header style, and core widgets — Æther just
+ * widens the inputs and routes solves through the on-demand worker
+ * pool. See `AetherLookupView` for the Æther-mode implementation.
+ */
 export const LookupView = observer(function LookupView() {
+  const { secret } = useStore();
+  if (secret.aetherActive) return <AetherLookupView />;
+  return <StandardLookupView />;
+});
+
+const StandardLookupView = observer(function StandardLookupView() {
   const { data } = useStore();
   const lookup = useMemo(() => new LookupStore(), []);
   const dice = lookup.dice;

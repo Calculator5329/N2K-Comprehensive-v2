@@ -5,7 +5,7 @@
 /*
  * The N2K Almanac — global styles.
  *
- * Sixteen themes are defined as CSS variable bundles on
+ * Every registered edition (see THEME_IDS) is defined as a CSS-variable bundle on
  * `[data-theme="..."]`. Components reference Tailwind classes (paper-50,
  * ink-300, oxblood-500, font-display, etc.) that resolve to these
  * variables, so swapping themes is purely a matter of toggling the

@@ -11,11 +11,11 @@ import type { DiceTriple } from "../../core/types";
 
 /**
  * Edition gallery — renders the same dice/target lookup through every
- * one of the sixteen editions at once.
+ * registered edition at once (currently `THEME_IDS.length`).
  *
  * Doubles as a visual regression surface: any per-theme breakage shows
- * up immediately because all sixteen cards share one input. Clicking a
- * card sets the global theme and jumps to the full Lookup view.
+ * up immediately because every card shares one input. Clicking a card
+ * sets the global theme and jumps to the full Lookup view.
  *
  * Implementation notes:
  *
@@ -36,6 +36,34 @@ import type { DiceTriple } from "../../core/types";
  */
 const DEFAULT_DICE: DiceTriple = [2, 3, 5];
 const DEFAULT_TOTAL = 40;
+
+// Spelled-out cardinals so the masthead reads "Seventeen editions, one
+// lookup." rather than "17 editions" — matches the in-print voice of
+// the rest of the almanac. Adding a new theme automatically picks the
+// right word; we cap at twenty (the same range AboutView uses) and
+// fall back to the digit if anyone ever blows past that.
+const EDITION_COUNT_WORDS: Record<number, string> = {
+  1: "one",
+  2: "two",
+  3: "three",
+  4: "four",
+  5: "five",
+  6: "six",
+  7: "seven",
+  8: "eight",
+  9: "nine",
+  10: "ten",
+  11: "eleven",
+  12: "twelve",
+  13: "thirteen",
+  14: "fourteen",
+  15: "fifteen",
+  16: "sixteen",
+  17: "seventeen",
+  18: "eighteen",
+  19: "nineteen",
+  20: "twenty",
+};
 
 function clampDie(value: number): number {
   if (!Number.isFinite(value)) return 1;
@@ -223,6 +251,13 @@ export const GalleryView = observer(function GalleryView() {
 
   const dice = sortedDice(d1, d2, d3);
   const activeTheme = store.theme.theme;
+  // Spell out the edition count so the masthead reads "Seventeen
+  // editions, one lookup." Falls back to the digit if the registry
+  // ever exceeds the lookup table (currently capped at twenty —
+  // mirrors `AboutView`'s `NUMBER_WORDS`).
+  const editionCount = THEME_IDS.length;
+  const editionCountWord =
+    EDITION_COUNT_WORDS[editionCount] ?? editionCount.toLocaleString();
 
   const selectEdition = (id: ThemeId) => {
     store.theme.setTheme(id);
@@ -239,7 +274,7 @@ export const GalleryView = observer(function GalleryView() {
         eyebrow="Gallery"
         title={
           <>
-            Sixteen editions,
+            {editionCountWord.charAt(0).toUpperCase() + editionCountWord.slice(1)} editions,
             <br />
             one lookup.
           </>

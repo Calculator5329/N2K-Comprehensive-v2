@@ -2,7 +2,158 @@
 
 Running log of session work.
 
-## Unreleased — Compare view: chart modes + richer stats
+## Unreleased — Æther mode integration across every standard view
+
+The Æther variant — originally a single hidden `AetherView` page added
+on Konami unlock — has been folded into every standard view as a
+behaviour mode rather than a separate tab. The standalone tab is gone;
+the same nav now drives both modes, and the `secret.aetherActive` flag
+on `SecretStore` decides which renderer the four data-bearing views
+use.
+
+### Per-view delegation
+
+Each of the four standard views grew a thin `observer` wrapper that
+inspects `secret.aetherActive` and returns the matching Æther variant
+when active. The standard implementation is unchanged and re-exported
+under a `Standard…View` name so the rest of the app can keep importing
+the canonical entry point:
+
+- `web/src/features/lookup/LookupView.tsx` → `AetherLookupView`
+- `web/src/features/explore/ExploreView.tsx` → `AetherExploreView`
+- `web/src/features/compare/CompareView.tsx` → `AetherCompareView`
+- `web/src/features/visualize/VisualizeView.tsx` → `AetherVisualizeView`
+
+Æther variants live next to their standard counterparts (same folder,
+`Aether*` prefix) so feature ownership stays in one place. Each Æther
+view talks to the on-demand worker pool via `AetherDataStore` and
+keeps its own per-feature UI store (`AetherCompareStore`,
+`AetherExploreStore`) for state that is meaningfully different from the
+standard sibling (arity filter, sweep cache, tuple search, etc.).
+
+### `web/src/services/aetherSample.ts` (new)
+
+Canonical 1,000-tuple Æther sample shared between Explore, Visualize,
+Compare, and Compose so every Æther surface operates on the same
+substrate. Built once at module load; arities 3/4/5 are mixed in fixed
+proportions.
+
+### `web/src/services/candidatePools.ts` + `web/src/features/compose/ComposeView.tsx`
+
+- New `AETHER_CANDIDATE_POOLS` exposing an `aetherSample` pool — the
+  arity-3 slice of `AETHER_SAMPLE`, restricted to dice in `[1, 20]`
+  so it remains compatible with the bundled stats dataset that
+  Compose evaluates against.
+- `ComposeView` appends the Æther pools to its picker only when
+  `secret.aetherActive`, and renders an `AetherNotice` aside
+  explaining why wider Æther tuples (negatives, values > 20) are not
+  selectable in Compose.
+
+### `web/src/ui/nav.ts`
+
+The standalone `"Æ — Æther"` nav entry was retired. `useNavItems()`
+now always returns `BASE_NAV_ITEMS`; the hook is kept (rather than
+inlining `NAV_ITEMS`) so future per-mode nav variations have a single
+extension point.
+
+### Verification
+
+- `npm run typecheck` (root) — clean.
+- `npm --workspace web run typecheck` — clean.
+- `npm test` — 153/153 passing.
+- `npm --workspace web run test` — 40/40 passing.
+- `npm --workspace web run build` — clean. Bundle:
+  `index-*.js` 462.56 kB raw / 124.06 kB gzip, `aetherSolverWorker`
+  5.77 kB. Aether code is part of the main bundle now (no longer
+  lazy) because every standard view imports its Aether sibling at
+  module scope to dispatch on `aetherActive`.
+
+## Unreleased — Tabletop responsive audit (320–1920) + Visualize chart color fix
+
+Walked the Tabletop edition through nine viewports (1920×1080, 1440×900,
+1280×720, 1024×768, 768×1024, 414×896, 375×667, 320×568) covering every
+view (Lookup, Explore, Compare, Visualize, Compose, Gallery, Colophon).
+All Phase 7 narrow-viewport patches held — the navy frame, hard-edged
+cards, fluid `clamp()` headings, and 6×6 board grid all behave from
+tablet down to the iPhone SE. Two real bugs surfaced and were fixed:
+
+### `web/src/features/visualize/VisualizeView.tsx` and `web/src/features/visualize/AetherVisualizeView.tsx`
+
+- **Invisible solver-count histogram and Coverage atlas in Tabletop** —
+  three call sites built inline `background`/`stroke` strings against
+  the legacy `--oxblood-500` CSS variable (a holdover from when the
+  Almanac theme was the only one). Themes were renamed to
+  `--accent-500` / `--support-500` long ago, and Tailwind classes
+  (`bg-oxblood-500`) still resolve via `tailwind.config.js`, but the
+  hand-built strings did not. Result: in every theme that did not also
+  define `--oxblood-500` (i.e. all of them except Almanac), the
+  "How many triples solve each target" mini-histogram and the
+  Coverage-mode atlas grid rendered transparent — visible only as a
+  caption with empty space above it. The avg-difficulty polyline in
+  the Aether layout had the same bug. All three references now use
+  `--accent-500`, which every theme defines.
+
+### `web/src/features/gallery/GalleryView.tsx`, `web/src/ui/nav.ts`, `web/src/styles/globals.css`, `web/index.html`
+
+- **Hard-coded "Sixteen editions" headline** — Phase 7 added the
+  Herbarium edition, bringing the count to seventeen, but the Gallery
+  page header, the nav subtitle, and two source comments still said
+  "Sixteen". `GalleryView` now derives the spelled-out count from
+  `THEME_IDS.length` via an `EDITION_COUNT_WORDS` table (mirrors
+  `AboutView`), capitalising the first letter so the Tabletop theme's
+  global `text-transform: uppercase` on `h1` keeps working. The nav
+  subtitle becomes the version-agnostic "Every edition, side by side";
+  the comments now reference "every registered edition (see THEME_IDS)".
+
+## Unreleased — Visualize + Explore polish: aligned coverage lists, sparkline fix, easiest/hardest split
+
+Three small but visible polish passes following the Compare-view chart-modes
+work. Each was driven by a real screenshot of clipped/misaligned content,
+not a hypothetical concern.
+
+### `web/src/features/visualize/VisualizeView.tsx`
+
+- **Sparkline cards** — the per-triple cards in `Per-triple sparklines`
+  packed `[★] [dice] AVG x.x · n/999` onto a single flex row. At three-
+  and four-up grid widths, the trailing "999" was being clipped by the
+  card's right edge ("…/99"). Split the row: dice + star stay on the
+  first line, the readout drops to its own line below with
+  `whitespace-nowrap` + `overflow-hidden text-ellipsis`. Also wrapped
+  the solvable count in a `tabular` span so the digit width matches the
+  avg readout.
+- **Coverage gaps** — the side-by-side `Most fragile targets`
+  (text-only, 10 rows) and `Triples with the worst coverage`
+  (dice-glyph rows, 8 rows) lists used different counts and
+  intrinsically different row heights, so the columns ended at
+  different y positions. Set both lists to `COVERAGE_LIST_LEN = 8`
+  and gave each `<li>` `min-h-[2rem]` so the text rows match the
+  dice-glyph rows visually.
+
+### `web/src/features/explore/ExploreView.tsx`
+
+- **Drilldown panel** — the per-triple aside used to be `Cleanest
+  equations` (top 12 by ascending difficulty). User feedback: only
+  ever showing the easy end hides half the story. Replaced the single
+  ordered list with a `Top 8 easiest` / `Top 8 hardest` two-column
+  grid (single column under `xl:`, two columns above), sharing one
+  `DrilldownColumn` helper. Section heading became `Easiest & hardest`
+  and the page-header dek now reads "drill in to read each triple's
+  easiest and hardest equations side by side." Compare button + the
+  `n solvable · n impossible` summary line are unchanged.
+
+### Verification
+
+- `npm --workspace web run typecheck` — clean.
+- `npm --workspace web run test` — 40/40 passing.
+- `npm --workspace web run build` — clean (`index-*.js` 422.92 kB
+  gzipped 117.13 kB; bundle delta is the inline split-list helper, no
+  measurable impact).
+- Manual: confirmed the sparkline header now shows the full `n/999`
+  in the 3- and 4-up grid; confirmed both coverage-gap columns end on
+  the same y baseline at sm:grid-cols-2 with 8 dice-glyph rows on the
+  right; confirmed the Explore dek text update rendered.
+
+## Compare view: chart modes + richer stats
 
 The Compare ("§ III THE BENCH") chart was visually noisy at the full
 1..999 target domain — overlaying four per-target curves with ~1000

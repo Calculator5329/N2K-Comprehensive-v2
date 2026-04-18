@@ -8,6 +8,7 @@ import { FavoriteToggle } from "../../ui/FavoriteToggle";
 import { PageHeader } from "../_shared/PageHeader";
 import { ExploreStore, type SortKey } from "./ExploreStore";
 import type { DiceSummary, DiceTriple } from "../../core/types";
+import { AetherExploreView } from "./AetherExploreView";
 
 const COLUMNS: ReadonlyArray<{
   key: SortKey;
@@ -505,6 +506,12 @@ function DrilldownColumn({
 // ---------------------------------------------------------------------------
 
 export const ExploreView = observer(function ExploreView() {
+  const { secret } = useStore();
+  if (secret.aetherActive) return <AetherExploreView />;
+  return <StandardExploreView />;
+});
+
+const StandardExploreView = observer(function StandardExploreView() {
   const { data, favorites } = useStore();
   const explore = useMemo(() => new ExploreStore(favorites), [favorites]);
   const index = data.index;

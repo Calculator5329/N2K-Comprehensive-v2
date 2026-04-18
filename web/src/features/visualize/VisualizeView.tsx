@@ -5,6 +5,7 @@ import { DiceGlyph } from "../../ui/DiceGlyph";
 import { FavoriteToggle } from "../../ui/FavoriteToggle";
 import { PageHeader } from "../_shared/PageHeader";
 import { paletteFor } from "./difficultyScale";
+import { AetherVisualizeView } from "./AetherVisualizeView";
 import type {
   DiceDetail,
   DiceSummary,
@@ -158,12 +159,12 @@ function coverageColor(
   maxCount: number,
 ): string {
   if (maxCount === minCount) return "rgb(var(--ink-100) / 0.18)";
-  // Fragile (low count) -> oxblood; covered (high) -> ink/40.
+  // Fragile (low count) -> accent; covered (high) -> ink/40.
   const t = (count - minCount) / (maxCount - minCount);
-  // Invert: low t (fragile) = strong oxblood, high t (covered) = subdued.
+  // Invert: low t (fragile) = strong accent, high t (covered) = subdued.
   const intensity = 1 - t;
-  const oxbloodAlpha = 0.25 + intensity * 0.6; // 0.25..0.85
-  return `rgb(var(--oxblood-500) / ${oxbloodAlpha.toFixed(2)})`;
+  const accentAlpha = 0.25 + intensity * 0.6; // 0.25..0.85
+  return `rgb(var(--accent-500) / ${accentAlpha.toFixed(2)})`;
 }
 
 const Atlas = observer(function Atlas({
@@ -423,10 +424,10 @@ const CoverageGaps = observer(function CoverageGaps({
         >
           {solverBins.buckets.map((count, i) => {
             const heightPct = (count / peak) * 100;
-            // Fragile bins (left side) get the oxblood accent; well-covered
+            // Fragile bins (left side) get the accent color; well-covered
             // bins fade to ink. Visual rhyme with the Coverage overlay.
             const t = i / (solverBins.buckets.length - 1);
-            const bg = `rgb(var(--oxblood-500) / ${(0.85 - t * 0.55).toFixed(2)})`;
+            const bg = `rgb(var(--accent-500) / ${(0.85 - t * 0.55).toFixed(2)})`;
             return (
               <div
                 key={i}
@@ -839,6 +840,12 @@ const SmallMultiples = observer(function SmallMultiples({
 // ---------------------------------------------------------------------------
 
 export const VisualizeView = observer(function VisualizeView() {
+  const { secret } = useStore();
+  if (secret.aetherActive) return <AetherVisualizeView />;
+  return <StandardVisualizeView />;
+});
+
+const StandardVisualizeView = observer(function StandardVisualizeView() {
   const { data } = useStore();
   const index = data.index;
   const [atlasMode, setAtlasMode] = useState<AtlasMode>("easiest");

@@ -14,7 +14,7 @@ const BASE_NAV_ITEMS: readonly NavItem[] = [
   { id: "compare",   folio: "III", label: "Compare",   subtitle: "Up to four triples, side by side" },
   { id: "visualize", folio: "IV",  label: "Visualize", subtitle: "Difficulty, mapped" },
   { id: "compose",   folio: "V",   label: "Compose",   subtitle: "Boards, rounds, balanced rolls" },
-  { id: "gallery",   folio: "VI",  label: "Gallery",   subtitle: "Sixteen editions, side by side" },
+  { id: "gallery",   folio: "VI",  label: "Gallery",   subtitle: "Every edition, side by side" },
   { id: "about",     folio: "VII", label: "Colophon",  subtitle: "About this volume" },
 ];
 
